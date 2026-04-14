@@ -260,6 +260,7 @@ if __name__ == "__main__":
         import datetime
         from starlette.requests import Request
         from starlette.responses import JSONResponse
+        from starlette.middleware.cors import CORSMiddleware
 
         class _Encoder(json.JSONEncoder):
             def default(self, o):
@@ -331,6 +332,21 @@ if __name__ == "__main__":
         async def health(request: Request) -> JSONResponse:
             return JSONResponse({"status": "ok"})
 
-        mcp.run(transport="streamable-http", host="0.0.0.0", port=port)
+        @mcp.custom_route("/health", methods=["OPTIONS"])
+        async def health_options(request: Request) -> JSONResponse:
+            return JSONResponse({"status": "ok"})
+
+        # Add CORS middleware
+        http_app = mcp.http_app(transport="streamable-http")
+        http_app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+        import uvicorn
+        uvicorn.run(http_app, host="0.0.0.0", port=port)
     else:
         mcp.run()

@@ -20,8 +20,8 @@ DEFAULT_CONFIG = {
     },
     "text_to_sql": {
         "llm_api_key": "",
-        "llm_provider": "zai",
-        "llm_model": "glm-5.1"
+        "llm_provider": "gemini",
+        "llm_model": "gemini-2.5-flash"
     }
 }
 
@@ -72,7 +72,7 @@ def _get_converter(llm_provider: str = None) -> TextToSQL:
 
     llm_config = config.get("text_to_sql", {})
     # Use provided provider or fall back to config
-    provider = llm_provider or llm_config.get("llm_provider", "zai")
+    provider = llm_provider or llm_config.get("llm_provider", "gemini")
 
     return TextToSQL(
         llm_api_key=llm_api_key,
@@ -165,6 +165,37 @@ def text_to_sql_execute(user_message: str, table_name: str, limit: int = 100, ll
         }
 
 
+@mcp.tool
+def ask(user_message: str, table_name: str, limit: int = 100, llm_provider: str = None) -> dict:
+    """
+    Ask a question in natural language and get a human-readable answer.
+
+    Full pipeline: generate SQL → execute query → LLM summarizes results.
+
+    Args:
+        user_message: Natural language question (e.g., "What are the top 5 most expensive drugs?")
+        table_name: PostgreSQL table to query from
+        limit: Max rows to return (default: 100)
+        llm_provider: LLM provider to use - "gemini", "zai", or "anthropic" (uses config default if None)
+
+    Returns:
+        Dict with 'success', 'sql', 'results', 'row_count', 'answer', 'error' fields
+    """
+    try:
+        converter = _get_converter(llm_provider)
+        result = converter.ask(user_message, table_name, limit)
+        return result
+    except Exception as e:
+        return {
+            "success": False,
+            "sql": None,
+            "results": None,
+            "row_count": 0,
+            "answer": None,
+            "error": str(e)
+        }
+
+
 @mcp.resource("config://database")
 def get_database_config() -> dict:
     """Get current database configuration (password hidden)"""
@@ -215,6 +246,91 @@ if __name__ == "__main__":
         print(f"⚠ Warning: No LLM API key configured")
         print(f"  Set QUERY_MCP_API_KEY environment variable or edit {CONFIG_FILE}")
 
+    import sys
+    transport = sys.argv[1] if len(sys.argv) > 1 else "stdio"
+    port = int(sys.argv[2]) if len(sys.argv) > 2 else 8000
+
     print(f"Query MCP Server starting...")
     print(f"Config file: {CONFIG_FILE}")
-    mcp.run()
+    print(f"Transport: {transport}")
+
+    if transport == "http":
+        # Add REST endpoints for curl usage
+        import decimal
+        import datetime
+        from starlette.requests import Request
+        from starlette.responses import JSONResponse
+
+        class _Encoder(json.JSONEncoder):
+            def default(self, o):
+                if isinstance(o, decimal.Decimal):
+                    return float(o)
+                if isinstance(o, (datetime.datetime, datetime.date)):
+                    return o.isoformat()
+                return super().default(o)
+
+        def _json_response(data, status=200):
+            body = json.dumps(data, cls=_Encoder)
+            return JSONResponse(content=json.loads(body), status_code=status)
+
+        async def _parse_body(request: Request):
+            try:
+                return await request.json()
+            except Exception:
+                return None
+
+        @mcp.custom_route("/api/ask", methods=["POST"])
+        async def api_ask(request: Request) -> JSONResponse:
+            body = await _parse_body(request)
+            if not body or "user_message" not in body or "table_name" not in body:
+                return _json_response({"success": False, "error": "Required: user_message, table_name"}, 400)
+            try:
+                converter = _get_converter(body.get("llm_provider"))
+                result = converter.ask(body["user_message"], body["table_name"], body.get("limit", 100))
+                return _json_response(result)
+            except Exception as e:
+                return _json_response({"success": False, "error": str(e)}, 500)
+
+        @mcp.custom_route("/api/query", methods=["POST"])
+        async def api_query(request: Request) -> JSONResponse:
+            body = await _parse_body(request)
+            if not body or "user_message" not in body or "table_name" not in body:
+                return _json_response({"success": False, "error": "Required: user_message, table_name"}, 400)
+            try:
+                converter = _get_converter(body.get("llm_provider"))
+                result = converter.generate_and_execute(body["user_message"], body["table_name"], body.get("limit", 100))
+                return _json_response(result)
+            except Exception as e:
+                return _json_response({"success": False, "error": str(e)}, 500)
+
+        @mcp.custom_route("/api/sql", methods=["POST"])
+        async def api_sql(request: Request) -> JSONResponse:
+            body = await _parse_body(request)
+            if not body or "user_message" not in body or "table_name" not in body:
+                return _json_response({"success": False, "error": "Required: user_message, table_name"}, 400)
+            try:
+                converter = _get_converter(body.get("llm_provider"))
+                result = converter.generate_sql(body["user_message"], body["table_name"])
+                return _json_response(result)
+            except Exception as e:
+                return _json_response({"success": False, "error": str(e)}, 500)
+
+        @mcp.custom_route("/api/execute", methods=["POST"])
+        async def api_execute(request: Request) -> JSONResponse:
+            body = await _parse_body(request)
+            if not body or "sql_query" not in body:
+                return _json_response({"success": False, "error": "Required: sql_query"}, 400)
+            try:
+                converter = _get_converter(body.get("llm_provider"))
+                result = converter.execute_query(body["sql_query"], body.get("limit", 100))
+                return _json_response(result)
+            except Exception as e:
+                return _json_response({"success": False, "error": str(e)}, 500)
+
+        @mcp.custom_route("/health", methods=["GET"])
+        async def health(request: Request) -> JSONResponse:
+            return JSONResponse({"status": "ok"})
+
+        mcp.run(transport="streamable-http", host="0.0.0.0", port=port)
+    else:
+        mcp.run()

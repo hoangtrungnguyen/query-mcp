@@ -71,8 +71,8 @@ Python application code.
 
 | File | Purpose | Lines |
 |------|---------|-------|
-| `server.py` | MCP server implementation | ~220 |
-| `text_to_sql.py` | TextToSQL core engine (uses DatabaseService) | ~200 |
+| `server.py` | MCP server + REST API endpoints | ~330 |
+| `text_to_sql.py` | TextToSQL engine with ask pipeline + LLM summary | ~300 |
 | `db_service.py` | Database service layer (connections, queries, history) | ~270 |
 | `migrate.py` | SQL migration runner (tracks via `schema_migrations`) | ~120 |
 

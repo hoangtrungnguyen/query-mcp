@@ -2,6 +2,39 @@
 
 Complete version history and updates.
 
+## [1.3.0] - 2026-04-14
+
+### Full Pipeline (`ask`), REST API, and Gemini Provider
+
+#### New Features
+- **`ask` tool** — full pipeline: natural language question → SQL generation → execution → LLM summarizes results → human-readable answer
+- **`summarize_results` method** — LLM interprets raw query data into natural language
+- **REST API endpoints** in HTTP mode (`python src/server.py http [port]`):
+  - `POST /api/ask` — full pipeline with text answer
+  - `POST /api/query` — generate + execute (raw results)
+  - `POST /api/sql` — generate SQL only
+  - `POST /api/execute` — run raw SQL
+  - `GET /health` — health check
+- **`_call_llm` helper** — DRY refactor, single method handles all 3 LLM providers
+- Request validation on all REST endpoints (returns 400 with JSON error for bad requests)
+- Auto-serialization of `Decimal` and `datetime` types in REST responses
+
+#### Changes
+- **Google Gemini** is now the default LLM provider (`gemini-2.5-flash`)
+- Added `google-genai` SDK integration with system instruction support
+- Free tier: 500 req/day (2.5-flash), 1500 req/day (2.0-flash)
+- Fixed Z.ai SDK `system` parameter (moved to message role)
+- Fixed trailing semicolon in LLM-generated SQL breaking LIMIT append
+- Updated `requirements.txt` to use flexible version pins (`>=` instead of `==`)
+- Server supports `stdio` (default) and `http` transport modes via CLI arg
+- Updated all documentation
+
+#### Dependencies
+- Added: `google-genai>=1.72.0`
+- Changed: `zai-sdk>=0.2.0` (was `==1.0.0`), `anthropic>=0.38.0`, `psycopg2-binary>=2.9.10`, `fastmcp>=0.7.1`
+
+---
+
 ## [1.1.0] - 2026-04-13
 
 ### Database Service Layer, Migrations & Query History
@@ -351,9 +384,10 @@ Built with:
 ```
 2026-04-13 ──→ v1.0.0 (Initial Release) - stable
 2026-04-13 ──→ v1.1.0 (DB Service + Migrations + Query History) - stable
-2026-06-13 ──→ v1.2.0 (Planned) - performance improvements
-2026-09-13 ──→ v2.0.0 (Planned) - new features
-2027-02-13 ──→ v3.0.0 (Planned) - advanced features
+2026-04-13 ──→ v1.2.0 (Gemini default provider) - stable
+2026-07-13 ──→ v1.3.0 (Planned) - performance improvements
+2026-10-13 ──→ v2.0.0 (Planned) - new features
+2027-03-13 ──→ v3.0.0 (Planned) - advanced features
 ```
 
 ---

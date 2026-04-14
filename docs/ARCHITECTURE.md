@@ -21,9 +21,10 @@ Query MCP Server
 Entry point that implements the Model Context Protocol.
 
 **Responsibilities:**
-- Expose 3 MCP tools
+- Expose 4 MCP tools (`ask`, `generate_sql`, `execute_sql`, `text_to_sql_execute`)
 - Manage 2 MCP resources
 - Expose 1 MCP prompt
+- REST API endpoints in HTTP mode (`/api/ask`, `/api/query`, `/api/sql`, `/api/execute`, `/health`)
 - Load configuration
 - Handle requests
 
@@ -39,16 +40,19 @@ Core business logic for SQL generation and execution.
 **Responsibilities:**
 - Call LLM API to generate SQL
 - Delegate DB operations to DatabaseService
+- Summarize query results via LLM
 - Auto-log queries to history
 - Handle errors gracefully
 
 **Key Class:**
 ```python
 class TextToSQL:
-    def __init__(llm_api_key, db_config, llm_provider="zai")
+    def __init__(llm_api_key, db_config, llm_provider="gemini")
     def generate_sql(user_message, table_name) → Dict
     def execute_query(sql_query, limit) → Dict
     def generate_and_execute(user_message, table_name, limit, session_id) → Dict
+    def summarize_results(user_message, sql, results, row_count) → str
+    def ask(user_message, table_name, limit, session_id) → Dict  # full pipeline
 ```
 
 ### 3. Database Service (`db_service.py`)
@@ -111,8 +115,8 @@ Persistent JSON configuration file.
   },
   "text_to_sql": {
     "llm_api_key": "...",
-    "llm_provider": "zai",
-    "llm_model": "glm-5.1"
+    "llm_provider": "gemini",
+    "llm_model": "gemini-2.5-flash"
   }
 }
 ```
@@ -167,7 +171,27 @@ text_to_sql_execute(user_message, table_name, limit)
 Response: { success: true, sql: "SELECT ...", results: [...], row_count: N, error: null }
 ```
 
-### 4. Migration Flow
+### 4. Ask (Full Pipeline)
+
+```
+User: "What are the top 3 most expensive drugs?"
+    ↓
+ask(user_message, table_name, limit)
+    ├─ Start timer
+    ├─ Call generate_sql()
+    │   ├─ DatabaseService.get_table_schema()
+    │   └─ LLM generates SQL
+    ├─ Call execute_query()
+    │   └─ DatabaseService.execute_query()
+    ├─ Call summarize_results()
+    │   └─ LLM interprets raw data → natural language answer
+    ├─ Log to query_history (best-effort)
+    └─ Return SQL + results + answer
+    ↓
+Response: { success: true, sql: "SELECT ...", results: [...], answer: "The top 3...", error: null }
+```
+
+### 5. Migration Flow
 
 ```
 python src/migrate.py
@@ -187,7 +211,30 @@ For each pending migration:
 
 ## LLM Provider Integration
 
-### Z.ai (Default)
+### Google Gemini (Default)
+
+```python
+from google import genai
+from google.genai import types
+
+client = genai.Client(api_key="...")
+response = client.models.generate_content(
+    model="gemini-2.5-flash",
+    config=types.GenerateContentConfig(
+        system_instruction="...",
+        max_output_tokens=500,
+    ),
+    contents="user message",
+)
+sql = response.text
+```
+
+**Advantages:**
+- Free tier (500 req/day for 2.5-flash)
+- Fast inference
+- Good SQL generation
+
+### Z.ai
 
 ```python
 from zai import ZaiClient
@@ -195,8 +242,10 @@ from zai import ZaiClient
 client = ZaiClient(api_key="...")
 response = client.chat.completions.create(
     model="glm-5.1",
-    messages=[{"role": "user", "content": "..."}],
-    system="..."
+    messages=[
+        {"role": "system", "content": "..."},
+        {"role": "user", "content": "..."},
+    ],
 )
 sql = response.choices[0].message.content
 ```
@@ -204,7 +253,6 @@ sql = response.choices[0].message.content
 **Advantages:**
 - Fast inference
 - Good SQL generation
-- Supports function calling (future)
 
 ### Anthropic Claude
 
@@ -242,12 +290,12 @@ Priority (highest to lowest):
    ```json
    {
      "text_to_sql": {
-       "llm_provider": "zai"
+       "llm_provider": "gemini"
      }
    }
    ```
 
-3. **Default** ("zai")
+3. **Default** ("gemini")
 
 This allows users to:
 - Override globally on-demand
@@ -366,7 +414,7 @@ Users should always check `success` field.
 ### LLM Provider
 1. `llm_provider` parameter in request
 2. `text_to_sql.llm_provider` in config.json
-3. Default: "zai"
+3. Default: "gemini"
 
 ### Database
 1. Values from `database.*` in config.json
@@ -376,9 +424,14 @@ Users should always check `success` field.
 ## MCP Protocol Details
 
 ### Tools
+- `ask(user_message, table_name, limit?, llm_provider?)` — full pipeline with LLM summary
 - `generate_sql(user_message, table_name, llm_provider?)`
 - `execute_sql(sql_query, limit?, llm_provider?)`
 - `text_to_sql_execute(user_message, table_name, limit?, llm_provider?)`
+
+### Transport Modes
+- **stdio** (default): `python src/server.py` — for MCP clients (Claude)
+- **HTTP**: `python src/server.py http [port]` — adds REST endpoints for curl/web access
 
 ### Resources
 - `config://database` - Database config (no password)

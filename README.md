@@ -22,8 +22,8 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# 2. Configure API key
-export QUERY_MCP_API_KEY="your-zai-api-key"
+# 2. Configure API key (Gemini default)
+export QUERY_MCP_API_KEY="your-gemini-api-key"
 
 # 3. Configure database (optional, defaults to localhost:5432)
 # Edit ~/.query-mcp/config.json
@@ -40,7 +40,7 @@ python server.py
 
 ### Environment Variables
 ```bash
-export QUERY_MCP_API_KEY="your-api-key"      # Z.ai or Anthropic key
+export QUERY_MCP_API_KEY="your-api-key"      # Gemini, Z.ai, or Anthropic key
 ```
 
 ### Config File: `~/.query-mcp/config.json`
@@ -57,8 +57,8 @@ Auto-created on first run with defaults:
   },
   "text_to_sql": {
     "llm_api_key": "",
-    "llm_provider": "zai",
-    "llm_model": "glm-5.1"
+    "llm_provider": "gemini",
+    "llm_model": "gemini-2.5-flash"
   }
 }
 ```
@@ -71,7 +71,11 @@ Auto-created on first run with defaults:
 - `password` - Database password
 
 **LLM Providers:**
-- `zai` (default) - Z.ai GLM models
+- `gemini` (default) - Google Gemini models
+  - Models: `gemini-2.5-flash`, `gemini-2.0-flash`
+  - API key: https://aistudio.google.com/apikey (free tier available)
+  - API docs: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/sdks/overview
+- `zai` - Z.ai GLM models
   - Models: `glm-5.1`
   - API docs: https://docs.z.ai/guides/develop/python/introduction
 - `anthropic` - Anthropic Claude models
@@ -82,6 +86,32 @@ Auto-created on first run with defaults:
 
 All tools support the `llm_provider` parameter to override the config default on a per-call basis.
 
+### `ask` — Question to natural language answer (full pipeline)
+
+Ask a question in natural language and get a human-readable answer. Generates SQL, executes it, then summarizes results with the LLM.
+
+**Parameters:**
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `user_message` | string | Yes | - | Natural language question |
+| `table_name` | string | Yes | - | PostgreSQL table to query from |
+| `limit` | integer | No | 100 | Max rows to return |
+| `llm_provider` | string | No | config | LLM provider: "gemini", "zai", or "anthropic" |
+
+**Response:**
+```json
+{
+  "success": true,
+  "sql": "SELECT name, price FROM drugs ORDER BY price DESC LIMIT 5",
+  "results": [{"name": "Clopidogrel", "price": 45.99}],
+  "row_count": 5,
+  "answer": "The most expensive drug is Clopidogrel at $45.99.",
+  "error": null
+}
+```
+
+---
+
 ### `generate_sql` — Generate SQL without executing
 
 Generate a SQL query from natural language without executing it.
@@ -91,7 +121,7 @@ Generate a SQL query from natural language without executing it.
 |------|------|----------|---------|-------------|
 | `user_message` | string | Yes | - | Natural language query (e.g., "Show me all drugs with price > 100") |
 | `table_name` | string | Yes | - | PostgreSQL table to query from |
-| `llm_provider` | string | No | config | LLM provider: "zai" or "anthropic" |
+| `llm_provider` | string | No | config | LLM provider: "gemini", "zai", or "anthropic" |
 
 **Response:**
 ```json
@@ -122,7 +152,7 @@ Execute a raw SQL query and fetch results.
 |------|------|----------|---------|-------------|
 | `sql_query` | string | Yes | - | SQL query to execute |
 | `limit` | integer | No | 100 | Max rows to return |
-| `llm_provider` | string | No | config | LLM provider (kept for consistency, not used) |
+| `llm_provider` | string | No | config | LLM provider (unused for execute, kept for consistency) |
 
 **Response:**
 ```json
@@ -159,7 +189,7 @@ Convert natural language to SQL AND execute in one call.
 | `user_message` | string | Yes | - | Natural language query |
 | `table_name` | string | Yes | - | PostgreSQL table to query |
 | `limit` | integer | No | 100 | Max rows to return |
-| `llm_provider` | string | No | config | LLM provider: "zai" or "anthropic" |
+| `llm_provider` | string | No | config | LLM provider: "gemini", "zai", or "anthropic" |
 
 **Response:**
 ```json
@@ -271,12 +301,12 @@ Get help for different SQL query types:
 
 ## Examples
 
-### Example 1: Generate SQL (Z.ai)
+### Example 1: Generate SQL (Gemini)
 ```json
 {
   "user_message": "Find all items with status = 'active'",
   "table_name": "items",
-  "llm_provider": "zai"
+  "llm_provider": "gemini"
 }
 ```
 
@@ -321,6 +351,52 @@ Response:
 }
 ```
 
+## REST API (HTTP Mode)
+
+Start the server in HTTP mode for curl/REST access:
+
+```bash
+# Start HTTP server (default port 8000)
+python src/server.py http
+
+# Custom port
+python src/server.py http 8001
+```
+
+### Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/ask` | Full pipeline: question → SQL → execute → natural language answer |
+| `POST` | `/api/query` | Question → SQL → execute → raw results |
+| `POST` | `/api/sql` | Question → SQL only (no execution) |
+| `POST` | `/api/execute` | Run raw SQL query |
+| `GET` | `/health` | Health check |
+
+### curl Examples
+
+```bash
+# Ask — get a text answer
+curl -s -X POST http://localhost:8001/api/ask \
+  -H "Content-Type: application/json" \
+  -d '{"user_message": "What are the top 3 most expensive drugs?", "table_name": "drugs"}'
+
+# Query — raw data
+curl -s -X POST http://localhost:8001/api/query \
+  -H "Content-Type: application/json" \
+  -d '{"user_message": "Count drugs by category", "table_name": "drugs"}'
+
+# Generate SQL only
+curl -s -X POST http://localhost:8001/api/sql \
+  -H "Content-Type: application/json" \
+  -d '{"user_message": "Find inactive drugs", "table_name": "drugs"}'
+
+# Execute raw SQL
+curl -s -X POST http://localhost:8001/api/execute \
+  -H "Content-Type: application/json" \
+  -d '{"sql_query": "SELECT name, price FROM drugs WHERE price > 30", "limit": 5}'
+```
+
 ## Error Handling
 
 All tools return consistent error format with `success: false`.
@@ -333,7 +409,7 @@ All tools return consistent error format with `success: false`.
 | `Database connection failed` | Invalid host/port/credentials | Check config, verify PostgreSQL is running |
 | `Table 'xyz' not found or has no columns` | Table doesn't exist | Use correct table name (case-sensitive in PostgreSQL) |
 | `Query execution failed: syntax error` | Invalid SQL | Check generated SQL or provide valid SQL |
-| `unsupported provider: xyz` | Unknown LLM provider | Use "zai" or "anthropic" |
+| `Unsupported LLM provider: xyz` | Unknown LLM provider | Use "gemini", "zai", or "anthropic" |
 
 ### Error Response Format
 ```json

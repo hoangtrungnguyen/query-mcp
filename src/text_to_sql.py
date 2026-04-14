@@ -1,5 +1,6 @@
 """Text-to-SQL module using LLM API to convert natural language to SQL queries"""
 
+import json
 import time
 from typing import Optional, Dict, Any
 
@@ -17,7 +18,7 @@ class TextToSQL:
         db_name: str,
         db_user: str,
         db_password: str,
-        llm_provider: str = "zai",
+        llm_provider: str = "gemini",
         llm_model: str = None
     ):
         """
@@ -30,7 +31,7 @@ class TextToSQL:
             db_name: Database name
             db_user: Database user
             db_password: Database password
-            llm_provider: LLM provider (zai, anthropic)
+            llm_provider: LLM provider (gemini, zai, anthropic)
             llm_model: Model name (auto-detected if None)
         """
         self.llm_provider = llm_provider
@@ -43,7 +44,14 @@ class TextToSQL:
             password=db_password,
         )
 
-        if llm_provider == "zai":
+        if llm_provider == "gemini":
+            try:
+                from google import genai
+            except ImportError:
+                raise ValueError("google-genai required for Gemini provider. Install: pip install google-genai")
+            self.client = genai.Client(api_key=llm_api_key)
+            self.model = llm_model or "gemini-2.5-flash"
+        elif llm_provider == "zai":
             try:
                 from zai import ZaiClient
             except ImportError:
@@ -58,7 +66,47 @@ class TextToSQL:
             self.client = Anthropic(api_key=llm_api_key)
             self.model = llm_model or "claude-3-5-sonnet-20241022"
         else:
-            raise ValueError(f"Unsupported LLM provider: {llm_provider}")
+            raise ValueError(f"Unsupported LLM provider: {llm_provider}. Use: gemini, zai, anthropic")
+
+    # ------------------------------------------------------------------
+    # LLM helper
+    # ------------------------------------------------------------------
+
+    def _call_llm(self, system_prompt: str, user_message: str, max_tokens: int = 500) -> str:
+        """Call the configured LLM provider and return text response."""
+        if self.llm_provider == "gemini":
+            from google.genai import types
+            response = self.client.models.generate_content(
+                model=self.model,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    max_output_tokens=max_tokens,
+                ),
+                contents=user_message,
+            )
+            return response.text.strip()
+        elif self.llm_provider == "zai":
+            response = self.client.chat.completions.create(
+                model=self.model,
+                max_tokens=max_tokens,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+            )
+            return response.choices[0].message.content.strip()
+        elif self.llm_provider == "anthropic":
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=max_tokens,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_message}],
+            )
+            return response.content[0].text.strip()
+
+    # ------------------------------------------------------------------
+    # Core methods
+    # ------------------------------------------------------------------
 
     def _get_table_schema(self, table_name: str) -> str:
         """Get schema information for a table via DatabaseService."""
@@ -76,10 +124,8 @@ class TextToSQL:
             Dict with 'success', 'sql', 'error' fields
         """
         try:
-            # Get table schema
             schema = self._get_table_schema(table_name)
 
-            # Create prompt for LLM
             system_prompt = f"""You are a SQL expert. Convert natural language queries to PostgreSQL SQL.
 Always return ONLY the SQL query, no explanation, no markdown, no code blocks.
 Do not use backticks or SQL language markers.
@@ -93,34 +139,7 @@ Rules:
 - Do not modify data (SELECT only)
 - Include LIMIT clause if appropriate"""
 
-            if self.llm_provider == "zai":
-                # Z.ai SDK
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    max_tokens=500,
-                    system=system_prompt,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": user_message
-                        }
-                    ]
-                )
-                sql_query = response.choices[0].message.content.strip()
-            elif self.llm_provider == "anthropic":
-                # Anthropic SDK
-                response = self.client.messages.create(
-                    model=self.model,
-                    max_tokens=500,
-                    system=system_prompt,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": user_message
-                        }
-                    ]
-                )
-                sql_query = response.content[0].text.strip()
+            sql_query = self._call_llm(system_prompt, user_message)
 
             # Remove markdown code blocks if present
             if sql_query.startswith("```"):
@@ -137,6 +156,47 @@ Rules:
                 "sql": None,
                 "error": str(e)
             }
+
+    def summarize_results(
+        self,
+        user_message: str,
+        sql: str,
+        results: list,
+        row_count: int,
+    ) -> str:
+        """
+        Ask LLM to interpret query results into a natural language answer.
+
+        Args:
+            user_message: The original user question
+            sql: The SQL that was executed
+            results: List of result dicts from the query
+            row_count: Number of rows returned
+
+        Returns:
+            Natural language summary string
+        """
+        system_prompt = """You are a helpful data analyst. The user asked a question about their database.
+A SQL query was generated and executed. Now summarize the results in clear, natural language.
+
+Rules:
+- Answer the user's original question directly
+- Include key numbers, names, and insights from the data
+- Be concise but complete
+- If results are empty, say so clearly
+- Format numbers nicely (currency, percentages, etc. where appropriate)
+- Do not show SQL or raw JSON — just the answer"""
+
+        results_text = json.dumps(results[:50], indent=2, default=str) if results else "No results"
+
+        prompt = f"""Original question: {user_message}
+
+SQL executed: {sql}
+
+Results ({row_count} rows):
+{results_text}"""
+
+        return self._call_llm(system_prompt, prompt, max_tokens=1000)
 
     def execute_query(self, sql_query: str, limit: int = 100) -> Dict[str, Any]:
         """
@@ -198,6 +258,78 @@ Rules:
             "results": exec_result["results"],
             "row_count": exec_result.get("row_count", 0),
             "error": exec_result["error"]
+        }
+
+    def ask(
+        self,
+        user_message: str,
+        table_name: str,
+        limit: int = 100,
+        session_id: str = None,
+    ) -> Dict[str, Any]:
+        """
+        Full pipeline: generate SQL → execute → summarize results → return answer.
+
+        Args:
+            user_message: Natural language question
+            table_name: PostgreSQL table to query
+            limit: Max rows to return
+            session_id: Optional session id for history tracking
+
+        Returns:
+            Dict with 'success', 'sql', 'results', 'row_count', 'answer', 'error'
+        """
+        t0 = time.monotonic()
+
+        # Step 1: Generate SQL
+        gen_result = self.generate_sql(user_message, table_name)
+        if not gen_result["success"]:
+            self._log(user_message, table_name, None, False, 0,
+                      gen_result["error"], session_id, t0)
+            return {
+                "success": False,
+                "sql": None,
+                "results": None,
+                "row_count": 0,
+                "answer": None,
+                "error": gen_result["error"],
+            }
+
+        # Step 2: Execute SQL
+        exec_result = self.execute_query(gen_result["sql"], limit)
+        if not exec_result["success"]:
+            self._log(user_message, table_name, gen_result["sql"], False, 0,
+                      exec_result["error"], session_id, t0)
+            return {
+                "success": False,
+                "sql": gen_result["sql"],
+                "results": None,
+                "row_count": 0,
+                "answer": None,
+                "error": exec_result["error"],
+            }
+
+        # Step 3: Summarize with LLM
+        try:
+            answer = self.summarize_results(
+                user_message,
+                gen_result["sql"],
+                exec_result["results"],
+                exec_result["row_count"],
+            )
+        except Exception as e:
+            answer = None
+
+        self._log(user_message, table_name, gen_result["sql"],
+                  True, exec_result["row_count"], None, session_id, t0)
+
+        return {
+            "success": True,
+            "sql": gen_result["sql"],
+            "results": exec_result["results"],
+            "row_count": exec_result["row_count"],
+            "answer": answer,
+            "error": None,
         }
 
     def _log(self, user_message, table_name, sql, success, row_count,

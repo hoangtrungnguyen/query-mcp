@@ -1,8 +1,64 @@
 # Query MCP - API Reference
 
-Quick reference for all MCP tools, resources, and prompts.
+Quick reference for all MCP tools, REST API, resources, and prompts.
 
 ## Tools
+
+### ask
+
+Full pipeline: generate SQL from natural language, execute it, then summarize results with LLM.
+
+```
+Tool: ask
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `user_message` | string | Yes | - | Natural language question |
+| `table_name` | string | Yes | - | PostgreSQL table name |
+| `limit` | integer | No | 100 | Max rows to return |
+| `llm_provider` | string | No | config | "gemini", "zai", or "anthropic" |
+
+**Request:**
+```json
+{
+  "user_message": "What are the top 3 most expensive drugs?",
+  "table_name": "drugs",
+  "limit": 5
+}
+```
+
+**Success Response:**
+```json
+{
+  "success": true,
+  "sql": "SELECT name, price FROM drugs ORDER BY price DESC LIMIT 3",
+  "results": [
+    {"name": "Clopidogrel", "price": 45.99},
+    {"name": "Ciprofloxacin", "price": 35.99},
+    {"name": "Warfarin", "price": 28.99}
+  ],
+  "row_count": 3,
+  "answer": "The top 3 most expensive drugs are: 1. Clopidogrel ($45.99), 2. Ciprofloxacin ($35.99), 3. Warfarin ($28.99).",
+  "error": null
+}
+```
+
+**Error Response:**
+```json
+{
+  "success": false,
+  "sql": null,
+  "results": null,
+  "row_count": 0,
+  "answer": null,
+  "error": "Table 'xyz' not found or has no columns"
+}
+```
+
+---
 
 ### generate_sql
 
@@ -18,14 +74,14 @@ Tool: generate_sql
 |-----------|------|----------|---------|-------------|
 | `user_message` | string | ✓ | - | Natural language query |
 | `table_name` | string | ✓ | - | PostgreSQL table name |
-| `llm_provider` | string | - | config | "zai" or "anthropic" |
+| `llm_provider` | string | - | config | "gemini", "zai", or "anthropic" |
 
 **Request:**
 ```json
 {
   "user_message": "Show me all drugs with price > 100",
   "table_name": "drugs",
-  "llm_provider": "zai"
+  "llm_provider": "gemini"
 }
 ```
 
@@ -70,7 +126,7 @@ Tool: execute_sql
 {
   "sql_query": "SELECT * FROM drugs WHERE price > 100",
   "limit": 50,
-  "llm_provider": "zai"
+  "llm_provider": "gemini"
 }
 ```
 
@@ -114,7 +170,7 @@ Tool: text_to_sql_execute
 | `user_message` | string | ✓ | - | Natural language query |
 | `table_name` | string | ✓ | - | PostgreSQL table name |
 | `limit` | integer | - | 100 | Max rows to return |
-| `llm_provider` | string | - | config | "zai" or "anthropic" |
+| `llm_provider` | string | - | config | "gemini", "zai", or "anthropic" |
 
 **Request:**
 ```json
@@ -189,12 +245,54 @@ Resource: config://text-to-sql
 **Response:**
 ```json
 {
-  "llm_provider": "zai",
+  "llm_provider": "gemini",
   "llm_api_key_configured": true
 }
 ```
 
 **Note:** Actual API key is intentionally hidden. Only shows whether it's configured.
+
+---
+
+## REST API (HTTP Mode)
+
+When running in HTTP mode (`python src/server.py http [port]`), these REST endpoints are available alongside the MCP protocol.
+
+### `POST /api/ask`
+Full pipeline: question → SQL → execute → LLM summary. Same as the `ask` MCP tool.
+
+**Body:** `{"user_message": "...", "table_name": "...", "limit": 100, "llm_provider": "gemini"}`
+
+### `POST /api/query`
+Generate SQL and execute. Returns raw results (no LLM summary). Same as `text_to_sql_execute` MCP tool.
+
+**Body:** `{"user_message": "...", "table_name": "...", "limit": 100}`
+
+### `POST /api/sql`
+Generate SQL only (no execution). Same as `generate_sql` MCP tool.
+
+**Body:** `{"user_message": "...", "table_name": "..."}`
+
+### `POST /api/execute`
+Execute raw SQL. Same as `execute_sql` MCP tool.
+
+**Body:** `{"sql_query": "SELECT ...", "limit": 100}`
+
+### `GET /health`
+Health check. Returns `{"status": "ok"}`.
+
+### Error Handling
+All endpoints validate request body and return structured errors:
+```json
+// 400 Bad Request — missing required fields
+{"success": false, "error": "Required: user_message, table_name"}
+
+// 500 Internal Error — execution failure
+{"success": false, "error": "Database connection failed: ..."}
+```
+
+### Data Types
+`Decimal` and `datetime` values from PostgreSQL are auto-serialized to `float` and ISO 8601 strings.
 
 ---
 
@@ -377,15 +475,24 @@ SELECT * FROM drugs ORDER BY price DESC LIMIT 5;
 }
 ```
 
-**Uses:** Claude instead of Z.ai (overrides config default)
+**Uses:** Claude instead of Gemini (overrides config default)
 
 ---
 
 ## Provider Differences
 
-### Z.ai (Default)
+### Google Gemini (Default)
 
-- **Pros:** Fast, good SQL generation, low latency
+- **Pros:** Free tier, fast, good SQL generation
+- **Model:** `gemini-2.5-flash`
+- **Best for:** General use, free tier
+- **Free:** 500 req/day (2.5-flash), 1500 req/day (2.0-flash)
+- **API key:** https://aistudio.google.com/apikey
+- **Docs:** https://docs.cloud.google.com/vertex-ai/generative-ai/docs/sdks/overview
+
+### Z.ai
+
+- **Pros:** Fast inference, good SQL generation
 - **Model:** `glm-5.1`
 - **Best for:** Simple queries, real-time use
 - **Docs:** https://docs.z.ai
@@ -605,10 +712,10 @@ Each migration runs in a transaction. On failure, the transaction rolls back and
 
 | Option | Type | Default | Example |
 |--------|------|---------|---------|
-| `QUERY_MCP_API_KEY` | env var | - | `d0662f7ffca1436ca9925c940fedd661.mJYqCfIg6KhS4OsG` |
+| `QUERY_MCP_API_KEY` | env var | - | `AIzaSy...` (Gemini key) |
 | `text_to_sql.llm_api_key` | config | - | (same as above) |
-| `text_to_sql.llm_provider` | config | "zai" | "anthropic" |
-| `text_to_sql.llm_model` | config | "glm-5.1" | "claude-3-5-sonnet-20241022" |
+| `text_to_sql.llm_provider` | config | "gemini" | "gemini", "zai", "anthropic" |
+| `text_to_sql.llm_model` | config | "gemini-2.5-flash" | "gemini-2.0-flash", "glm-5.1", "claude-3-5-sonnet-20241022" |
 | `database.host` | config | "localhost" | "postgres.example.com" |
 | `database.port` | config | 5432 | 5432 |
 | `database.name` | config | "postgres" | "mydb" |

@@ -148,6 +148,7 @@ class DatabaseService:
             Dict with success, results, row_count, error.
         """
         try:
+            sql = sql.rstrip().rstrip(";")
             if "LIMIT" not in sql.upper():
                 sql = f"{sql} LIMIT {limit}"
 

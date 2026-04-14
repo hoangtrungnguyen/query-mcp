@@ -112,19 +112,27 @@ class TextToSQL:
         """Get schema information for a table via DatabaseService."""
         return self.db.get_table_schema(table_name)
 
-    def generate_sql(self, user_message: str, table_name: str) -> Dict[str, Any]:
+    def _lang_instruction(self, lang: Optional[str]) -> str:
+        """Return a language instruction string for LLM prompts."""
+        if lang:
+            return f"You MUST reply in {lang}."
+        return "Reply in the same language as the user's query."
+
+    def generate_sql(self, user_message: str, table_name: str, lang: str = None) -> Dict[str, Any]:
         """
         Generate SQL query from natural language
 
         Args:
             user_message: Natural language query from user
             table_name: PostgreSQL table to query from
+            lang: Response language (e.g., "vi", "en", "Vietnamese"). Auto-detects if None.
 
         Returns:
             Dict with 'success', 'sql', 'error', 'needs_clarification', 'clarification' fields
         """
         try:
             schema = self._get_table_schema(table_name)
+            lang_inst = self._lang_instruction(lang)
 
             system_prompt = f"""You are a SQL expert. Convert natural language queries to PostgreSQL SQL.
 You understand queries in multiple languages including English and Vietnamese.
@@ -142,7 +150,7 @@ If the query is clear, return ONLY the SQL query — no explanation, no markdown
 
 If the query is unclear, ambiguous, or cannot be mapped to the table schema, return exactly:
 CLARIFY: <your question to the user explaining what is unclear and suggesting how they can rephrase>
-Reply the CLARIFY message in the same language as the user's query.
+{lang_inst}
 
 Examples of when to ask for clarification:
 - The user references columns that don't exist in the schema
@@ -189,6 +197,7 @@ Examples of when to ask for clarification:
         sql: str,
         results: list,
         row_count: int,
+        lang: str = None,
     ) -> str:
         """
         Ask LLM to interpret query results into a natural language answer.
@@ -202,9 +211,10 @@ Examples of when to ask for clarification:
         Returns:
             Natural language summary string
         """
-        system_prompt = """You are a helpful data analyst. The user asked a question about their database.
+        lang_inst = self._lang_instruction(lang)
+        system_prompt = f"""You are a helpful data analyst. The user asked a question about their database.
 A SQL query was generated and executed. Now summarize the results in clear, natural language.
-Reply in the same language as the user's original question.
+{lang_inst}
 
 Rules:
 - Answer the user's original question directly
@@ -212,8 +222,7 @@ Rules:
 - Be concise but complete
 - If results are empty, say so clearly
 - Format numbers nicely (currency, percentages, etc. where appropriate)
-- Do not show SQL or raw JSON — just the answer
-- Match the language of the user (e.g., reply in Vietnamese if asked in Vietnamese)"""
+- Do not show SQL or raw JSON — just the answer"""
 
         results_text = json.dumps(results[:50], indent=2, default=str) if results else "No results"
 
@@ -245,6 +254,7 @@ Results ({row_count} rows):
         table_name: str,
         limit: int = 100,
         session_id: str = None,
+        lang: str = None,
     ) -> Dict[str, Any]:
         """
         Generate SQL and execute in one call
@@ -254,6 +264,7 @@ Results ({row_count} rows):
             table_name: PostgreSQL table to query
             limit: Max rows to return
             session_id: Optional session id for query history tracking
+            lang: Response language (e.g., "vi", "en"). Auto-detects if None.
 
         Returns:
             Dict with 'success', 'sql', 'results', 'error' fields
@@ -261,7 +272,7 @@ Results ({row_count} rows):
         t0 = time.monotonic()
 
         # Generate SQL
-        gen_result = self.generate_sql(user_message, table_name)
+        gen_result = self.generate_sql(user_message, table_name, lang=lang)
         if gen_result.get("needs_clarification"):
             self._log(user_message, table_name, None, False, 0,
                       "needs_clarification", session_id, t0)
@@ -310,6 +321,7 @@ Results ({row_count} rows):
         table_name: str,
         limit: int = 100,
         session_id: str = None,
+        lang: str = None,
     ) -> Dict[str, Any]:
         """
         Full pipeline: generate SQL → execute → summarize results → return answer.
@@ -319,6 +331,7 @@ Results ({row_count} rows):
             table_name: PostgreSQL table to query
             limit: Max rows to return
             session_id: Optional session id for history tracking
+            lang: Response language (e.g., "vi", "en", "Vietnamese"). Auto-detects if None.
 
         Returns:
             Dict with 'success', 'sql', 'results', 'row_count', 'answer',
@@ -327,7 +340,7 @@ Results ({row_count} rows):
         t0 = time.monotonic()
 
         # Step 1: Generate SQL
-        gen_result = self.generate_sql(user_message, table_name)
+        gen_result = self.generate_sql(user_message, table_name, lang=lang)
         if gen_result.get("needs_clarification"):
             self._log(user_message, table_name, None, False, 0,
                       "needs_clarification", session_id, t0)
@@ -378,6 +391,7 @@ Results ({row_count} rows):
                 gen_result["sql"],
                 exec_result["results"],
                 exec_result["row_count"],
+                lang=lang,
             )
         except Exception as e:
             answer = None

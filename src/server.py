@@ -166,7 +166,7 @@ def text_to_sql_execute(user_message: str, table_name: str, limit: int = 100, ll
 
 
 @mcp.tool
-def ask(user_message: str, table_name: str, limit: int = 100, llm_provider: str = None) -> dict:
+def ask(user_message: str, table_name: str, limit: int = 100, llm_provider: str = None, lang: str = None) -> dict:
     """
     Ask a question in natural language and get a human-readable answer.
 
@@ -177,13 +177,14 @@ def ask(user_message: str, table_name: str, limit: int = 100, llm_provider: str 
         table_name: PostgreSQL table to query from
         limit: Max rows to return (default: 100)
         llm_provider: LLM provider to use - "gemini", "zai", or "anthropic" (uses config default if None)
+        lang: Response language (e.g., "vi", "en", "Vietnamese"). Auto-detects from query if None.
 
     Returns:
         Dict with 'success', 'sql', 'results', 'row_count', 'answer', 'error' fields
     """
     try:
         converter = _get_converter(llm_provider)
-        result = converter.ask(user_message, table_name, limit)
+        result = converter.ask(user_message, table_name, limit, lang=lang)
         return result
     except Exception as e:
         return {
@@ -287,7 +288,7 @@ if __name__ == "__main__":
                 return _json_response({"success": False, "error": "Required: user_message, table_name"}, 400)
             try:
                 converter = _get_converter(body.get("llm_provider"))
-                result = converter.ask(body["user_message"], body["table_name"], body.get("limit", 100))
+                result = converter.ask(body["user_message"], body["table_name"], body.get("limit", 100), lang=body.get("lang"))
                 return _json_response(result)
             except Exception as e:
                 return _json_response({"success": False, "error": str(e)}, 500)
@@ -299,7 +300,7 @@ if __name__ == "__main__":
                 return _json_response({"success": False, "error": "Required: user_message, table_name"}, 400)
             try:
                 converter = _get_converter(body.get("llm_provider"))
-                result = converter.generate_and_execute(body["user_message"], body["table_name"], body.get("limit", 100))
+                result = converter.generate_and_execute(body["user_message"], body["table_name"], body.get("limit", 100), lang=body.get("lang"))
                 return _json_response(result)
             except Exception as e:
                 return _json_response({"success": False, "error": str(e)}, 500)
@@ -311,7 +312,7 @@ if __name__ == "__main__":
                 return _json_response({"success": False, "error": "Required: user_message, table_name"}, 400)
             try:
                 converter = _get_converter(body.get("llm_provider"))
-                result = converter.generate_sql(body["user_message"], body["table_name"])
+                result = converter.generate_sql(body["user_message"], body["table_name"], lang=body.get("lang"))
                 return _json_response(result)
             except Exception as e:
                 return _json_response({"success": False, "error": str(e)}, 500)

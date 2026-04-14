@@ -121,14 +121,12 @@ class TextToSQL:
             table_name: PostgreSQL table to query from
 
         Returns:
-            Dict with 'success', 'sql', 'error' fields
+            Dict with 'success', 'sql', 'error', 'needs_clarification', 'clarification' fields
         """
         try:
             schema = self._get_table_schema(table_name)
 
             system_prompt = f"""You are a SQL expert. Convert natural language queries to PostgreSQL SQL.
-Always return ONLY the SQL query, no explanation, no markdown, no code blocks.
-Do not use backticks or SQL language markers.
 
 {schema}
 
@@ -137,24 +135,50 @@ Rules:
 - Only query the specified table
 - Use the exact column names from the schema
 - Do not modify data (SELECT only)
-- Include LIMIT clause if appropriate"""
+- Include LIMIT clause if appropriate
 
-            sql_query = self._call_llm(system_prompt, user_message)
+If the query is clear, return ONLY the SQL query — no explanation, no markdown, no code blocks.
+
+If the query is unclear, ambiguous, or cannot be mapped to the table schema, return exactly:
+CLARIFY: <your question to the user explaining what is unclear and suggesting how they can rephrase>
+
+Examples of when to ask for clarification:
+- The user references columns that don't exist in the schema
+- The query is too vague (e.g., "show me stuff")
+- The request is ambiguous (e.g., "show me the best drugs" — best by what metric?)
+- The request asks for data not in this table"""
+
+            response = self._call_llm(system_prompt, user_message)
 
             # Remove markdown code blocks if present
-            if sql_query.startswith("```"):
-                sql_query = sql_query.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+            if response.startswith("```"):
+                response = response.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+
+            # Check if LLM is asking for clarification
+            if response.upper().startswith("CLARIFY:"):
+                clarification = response[len("CLARIFY:"):].strip()
+                return {
+                    "success": False,
+                    "sql": None,
+                    "error": None,
+                    "needs_clarification": True,
+                    "clarification": clarification,
+                }
 
             return {
                 "success": True,
-                "sql": sql_query,
-                "error": None
+                "sql": response,
+                "error": None,
+                "needs_clarification": False,
+                "clarification": None,
             }
         except Exception as e:
             return {
                 "success": False,
                 "sql": None,
-                "error": str(e)
+                "error": str(e),
+                "needs_clarification": False,
+                "clarification": None,
             }
 
     def summarize_results(
@@ -234,6 +258,18 @@ Results ({row_count} rows):
 
         # Generate SQL
         gen_result = self.generate_sql(user_message, table_name)
+        if gen_result.get("needs_clarification"):
+            self._log(user_message, table_name, None, False, 0,
+                      "needs_clarification", session_id, t0)
+            return {
+                "success": False,
+                "sql": None,
+                "results": None,
+                "row_count": 0,
+                "error": None,
+                "needs_clarification": True,
+                "clarification": gen_result["clarification"],
+            }
         if not gen_result["success"]:
             self._log(user_message, table_name, None, False, 0,
                       gen_result["error"], session_id, t0)
@@ -241,12 +277,14 @@ Results ({row_count} rows):
                 "success": False,
                 "sql": None,
                 "results": None,
-                "error": gen_result["error"]
+                "row_count": 0,
+                "error": gen_result["error"],
+                "needs_clarification": False,
+                "clarification": None,
             }
 
         # Execute SQL
         exec_result = self.execute_query(gen_result["sql"], limit)
-        elapsed = exec_result.get("row_count", 0)
 
         self._log(user_message, table_name, gen_result["sql"],
                   exec_result["success"], exec_result.get("row_count", 0),
@@ -257,7 +295,9 @@ Results ({row_count} rows):
             "sql": gen_result["sql"],
             "results": exec_result["results"],
             "row_count": exec_result.get("row_count", 0),
-            "error": exec_result["error"]
+            "error": exec_result["error"],
+            "needs_clarification": False,
+            "clarification": None,
         }
 
     def ask(
@@ -277,12 +317,26 @@ Results ({row_count} rows):
             session_id: Optional session id for history tracking
 
         Returns:
-            Dict with 'success', 'sql', 'results', 'row_count', 'answer', 'error'
+            Dict with 'success', 'sql', 'results', 'row_count', 'answer',
+            'needs_clarification', 'clarification', 'error'
         """
         t0 = time.monotonic()
 
         # Step 1: Generate SQL
         gen_result = self.generate_sql(user_message, table_name)
+        if gen_result.get("needs_clarification"):
+            self._log(user_message, table_name, None, False, 0,
+                      "needs_clarification", session_id, t0)
+            return {
+                "success": False,
+                "sql": None,
+                "results": None,
+                "row_count": 0,
+                "answer": None,
+                "needs_clarification": True,
+                "clarification": gen_result["clarification"],
+                "error": None,
+            }
         if not gen_result["success"]:
             self._log(user_message, table_name, None, False, 0,
                       gen_result["error"], session_id, t0)
@@ -292,6 +346,8 @@ Results ({row_count} rows):
                 "results": None,
                 "row_count": 0,
                 "answer": None,
+                "needs_clarification": False,
+                "clarification": None,
                 "error": gen_result["error"],
             }
 
@@ -306,6 +362,8 @@ Results ({row_count} rows):
                 "results": None,
                 "row_count": 0,
                 "answer": None,
+                "needs_clarification": False,
+                "clarification": None,
                 "error": exec_result["error"],
             }
 
@@ -329,6 +387,8 @@ Results ({row_count} rows):
             "results": exec_result["results"],
             "row_count": exec_result["row_count"],
             "answer": answer,
+            "needs_clarification": False,
+            "clarification": None,
             "error": None,
         }
 

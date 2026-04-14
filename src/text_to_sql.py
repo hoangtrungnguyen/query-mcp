@@ -127,6 +127,7 @@ class TextToSQL:
             schema = self._get_table_schema(table_name)
 
             system_prompt = f"""You are a SQL expert. Convert natural language queries to PostgreSQL SQL.
+You understand queries in multiple languages including English and Vietnamese.
 
 {schema}
 
@@ -141,10 +142,11 @@ If the query is clear, return ONLY the SQL query — no explanation, no markdown
 
 If the query is unclear, ambiguous, or cannot be mapped to the table schema, return exactly:
 CLARIFY: <your question to the user explaining what is unclear and suggesting how they can rephrase>
+Reply the CLARIFY message in the same language as the user's query.
 
 Examples of when to ask for clarification:
 - The user references columns that don't exist in the schema
-- The query is too vague (e.g., "show me stuff")
+- The query is too vague (e.g., "show me stuff", "cho xem cái gì đó")
 - The request is ambiguous (e.g., "show me the best drugs" — best by what metric?)
 - The request asks for data not in this table"""
 
@@ -202,6 +204,7 @@ Examples of when to ask for clarification:
         """
         system_prompt = """You are a helpful data analyst. The user asked a question about their database.
 A SQL query was generated and executed. Now summarize the results in clear, natural language.
+Reply in the same language as the user's original question.
 
 Rules:
 - Answer the user's original question directly
@@ -209,7 +212,8 @@ Rules:
 - Be concise but complete
 - If results are empty, say so clearly
 - Format numbers nicely (currency, percentages, etc. where appropriate)
-- Do not show SQL or raw JSON — just the answer"""
+- Do not show SQL or raw JSON — just the answer
+- Match the language of the user (e.g., reply in Vietnamese if asked in Vietnamese)"""
 
         results_text = json.dumps(results[:50], indent=2, default=str) if results else "No results"
 

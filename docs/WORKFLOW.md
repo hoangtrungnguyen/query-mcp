@@ -14,9 +14,9 @@ Parse Excel (BeautifulSoup)
 Transform Data
     ↓
 PostgreSQL Database
-    ├─ drugs table
+    ├─ medicine_bid table
     ├─ items table
-    └─ load_logs table
+    └─ import_log table
 ```
 
 ## Workflow Steps
@@ -32,9 +32,8 @@ PostgreSQL Database
 - Checks database availability
 
 ### 3. Create Schema
-- Creates `drugs` table if not exists
-- Creates `items` table if not exists
-- Creates `load_logs` table for tracking
+- Schema managed by Alembic (`alembic upgrade head`)
+- Tables: `medicine_bid`, `items`, `import_log`
 - Creates indexes for performance
 
 ### 4. Parse Excel
@@ -56,51 +55,12 @@ PostgreSQL Database
 
 ## Database Schema
 
-### drugs table
-```sql
-CREATE TABLE drugs (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    category VARCHAR(100),
-    price DECIMAL(10, 2),
-    stock INTEGER,
-    status VARCHAR(50) DEFAULT 'active',
-    manufacturer VARCHAR(100),
-    description TEXT,
-    source_id VARCHAR(100),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
+See [DATABASE_DESIGN.md](DATABASE_DESIGN.md) for full schema details.
 
-### items table
-```sql
-CREATE TABLE items (
-    id SERIAL PRIMARY KEY,
-    drug_id INTEGER REFERENCES drugs(id),
-    sku VARCHAR(50) UNIQUE,
-    barcode VARCHAR(50),
-    batch_number VARCHAR(100),
-    expiry_date DATE,
-    quantity_available INTEGER DEFAULT 0,
-    status VARCHAR(50) DEFAULT 'active',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
+Key tables for the workflow:
 
-### load_logs table
-```sql
-CREATE TABLE load_logs (
-    id SERIAL PRIMARY KEY,
-    file_name VARCHAR(255),
-    record_type VARCHAR(50),
-    records_loaded INTEGER,
-    load_status VARCHAR(50),
-    error_message TEXT,
-    loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
+- **`medicine_bid`** — procurement bid records (42 columns, maps 1:1 to XLS columns)
+- **`import_log`** — one row per upload: filename, status, rows_inserted/updated/failed, error_message, note
 
 ## Usage
 
@@ -319,20 +279,20 @@ python src/cli_workflow.py
 
 ## Monitoring
 
-### Check Load History
+### Check Import History
 ```sql
-SELECT * FROM load_logs ORDER BY loaded_at DESC LIMIT 10;
+SELECT * FROM import_log ORDER BY created_at DESC LIMIT 10;
 ```
 
 ### Verify Data
 ```sql
-SELECT COUNT(*) as drugs FROM drugs;
-SELECT COUNT(*) as items FROM items;
+SELECT COUNT(*) FROM medicine_bid;
+SELECT COUNT(*) FROM items;
 ```
 
 ### Find Failures
 ```sql
-SELECT * FROM load_logs WHERE load_status = 'failed';
+SELECT * FROM import_log WHERE status = 'failed';
 ```
 
 ## Performance
@@ -389,8 +349,8 @@ def trigger_load(file: UploadFile):
 1. Set up PostgreSQL (Docker or local)
 2. Configure database credentials
 3. Run workflow: `python src/cli_workflow.py`
-4. Query data: `SELECT * FROM drugs;`
-5. Monitor with `load_logs` table
+4. Query data: `SELECT * FROM medicine_bid;`
+5. Monitor with `import_log` table
 
 ---
 

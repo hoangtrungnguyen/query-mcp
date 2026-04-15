@@ -216,28 +216,26 @@ Convert natural language to SQL AND execute in one call.
 
 ## Migrations
 
-Versioned SQL migrations in `migrations/`. Tracked via `schema_migrations` table.
+Schema managed by **Alembic**. Single migration file for v1: `alembic/versions/8f9881ec5d77_initial_schema.py`.
 
 ```bash
-# Apply pending migrations
-python src/migrate.py
+# Apply migrations
+alembic upgrade head
 
-# Check migration status
-python src/migrate.py status
+# Check current revision
+alembic current
+
+# Roll back one step
+alembic downgrade -1
 ```
-
-### Migration Files
-
-| File | Description |
-|------|-------------|
-| `001_initial_schema.sql` | Base tables: `drugs`, `items`, `users`, `orders` + indexes |
-| `002_seed_data.sql` | Sample data (15 drugs, 10 items, 10 users, 10 orders) |
-| `003_create_views.sql` | Views: `active_drugs`, `drugs_by_category`, `expensive_items` |
-| `004_query_history.sql` | Query tracking: `query_sessions`, `query_history` |
 
 ### Adding a New Migration
 
-Create `migrations/NNN_description.sql`. Run `python src/migrate.py`.
+```bash
+alembic revision -m "description_of_change"
+# Edit the generated file in alembic/versions/
+alembic upgrade head
+```
 
 ## Database Service (`db_service.py`)
 
@@ -249,17 +247,17 @@ from db_service import DatabaseService
 db = DatabaseService.from_config()
 
 # Schema introspection
-db.list_tables()                          # → ['drugs', 'items', ...]
-db.get_table_schema('drugs')              # → formatted column info
+db.list_tables()                                    # → ['medicine_bid', 'items', ...]
+db.get_table_schema('medicine_bid')                 # → formatted column info
 
 # Query execution
-db.execute_query("SELECT * FROM drugs")   # → {success, results, row_count, error}
-db.fetch_all('drugs', where="price > %s", params=(100,))
+db.execute_query("SELECT * FROM medicine_bid")      # → {success, results, row_count, error}
+db.fetch_all('medicine_bid', where="price > %s", params=(100,))
 db.fetch_one('users', where="id = %s", params=(1,))
-db.count('drugs')                         # → 15
+db.count('medicine_bid')                            # → 15
 
 # Write operations
-db.execute_write("UPDATE drugs SET stock = %s WHERE id = %s", (0, 1))
+db.execute_write("UPDATE medicine_bid SET stock = %s WHERE id = %s", (0, 1))
 
 # Query history
 db.log_query(user_message="...", table_name="drugs", generated_sql="...", success=True)
@@ -521,12 +519,13 @@ query-mcp/
 │   ├── server.py          # MCP server entry point
 │   ├── text_to_sql.py     # Core TextToSQL engine
 │   ├── db_service.py      # Database service layer
-│   └── migrate.py         # Migration runner
-├── migrations/
-│   ├── 001_initial_schema.sql
-│   ├── 002_seed_data.sql
-│   ├── 003_create_views.sql
-│   └── 004_query_history.sql
+│   ├── workflow.py        # Download & load workflow
+│   └── cli_workflow.py    # CLI for workflow
+├── alembic/
+│   ├── env.py             # Alembic environment config
+│   └── versions/
+│       └── 8f9881ec5d77_initial_schema.py  # v1 schema
+├── alembic.ini            # Alembic config
 ├── docker/                # Docker configuration
 ├── docs/                  # Documentation
 ├── requirements.txt

@@ -84,20 +84,15 @@ class DatabaseService:
     def get_query_history(limit, session_id, success_only) → list[dict]
 ```
 
-### 4. Migration Runner (`migrate.py`)
+### 4. Migrations (Alembic)
 
-Versioned SQL migration system.
-
-**Responsibilities:**
-- Track applied migrations in `schema_migrations` table
-- Apply pending `.sql` files from `migrations/` in order
-- Per-migration transactions with rollback on failure
-- Status reporting
+Schema versioned with **Alembic**. Single migration file for v1: `alembic/versions/8f9881ec5d77_initial_schema.py`.
 
 **Usage:**
 ```bash
-python src/migrate.py           # Apply pending migrations
-python src/migrate.py status    # Show applied/pending
+alembic upgrade head    # Apply pending migrations
+alembic current         # Show current revision
+alembic downgrade -1    # Roll back one step
 ```
 
 ### 5. Configuration (`~/.query-mcp/config.json`)
@@ -194,18 +189,16 @@ Response: { success: true, sql: "SELECT ...", results: [...], answer: "The top 3
 ### 5. Migration Flow
 
 ```
-python src/migrate.py
+alembic upgrade head
     ↓
-Ensure schema_migrations table exists
+Read alembic_version table (current revision)
     ↓
-Read applied versions from schema_migrations
+Resolve pending revisions from alembic/versions/
     ↓
-Scan migrations/*.sql for pending files
-    ↓
-For each pending migration:
+For each pending revision:
     ├─ BEGIN transaction
-    ├─ Execute SQL file
-    ├─ INSERT version into schema_migrations
+    ├─ Run upgrade() function
+    ├─ Update alembic_version
     └─ COMMIT (or ROLLBACK on error)
 ```
 
@@ -322,9 +315,9 @@ Each operation creates a new connection. Connections are never leaked thanks to 
 ### Schema Discovery
 
 ```python
-db.get_table_schema('drugs')
+db.get_table_schema('medicine_bid')
 # Queries information_schema.columns
-# Returns formatted string: "Table: drugs\nColumns:\n  - id: integer\n  ..."
+# Returns formatted string: "Table: medicine_bid\nColumns:\n  - id: integer\n  ..."
 
 db.list_tables()
 # Returns all user tables in public schema
@@ -339,10 +332,10 @@ Used to:
 
 ```python
 # Read queries — returns dict with success/results/row_count/error
-db.execute_query("SELECT * FROM drugs WHERE price > %s", params=(100,), limit=50)
+db.execute_query("SELECT * FROM medicine_bid WHERE price > %s", params=(100,), limit=50)
 
 # Write queries — returns affected row count
-db.execute_write("UPDATE drugs SET stock = %s WHERE id = %s", (0, 1))
+db.execute_write("UPDATE medicine_bid SET stock = %s WHERE id = %s", (0, 1))
 ```
 
 Safety:
@@ -358,7 +351,7 @@ Every `generate_and_execute()` call logs to `query_history`:
 ```python
 db.log_query(
     user_message="Show me expensive drugs",
-    table_name="drugs",
+    table_name="medicine_bid",
     generated_sql="SELECT ...",
     success=True,
     row_count=5,
@@ -373,9 +366,7 @@ Logging is best-effort — failures never break the main request.
 
 ### Database Schema
 
-**Application tables:** `drugs`, `items`, `users`, `orders`
-**System tables:** `schema_migrations`, `query_sessions`, `query_history`
-**Views:** `active_drugs`, `drugs_by_category`, `expensive_items`
+See [DATABASE_DESIGN.md](DATABASE_DESIGN.md) for full schema details, table listing, and record uniqueness/deduplication design.
 
 ## Error Handling Strategy
 

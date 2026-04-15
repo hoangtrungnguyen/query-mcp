@@ -2,6 +2,30 @@
 
 Complete version history and updates.
 
+## [1.4.0] - 2026-04-16
+
+### Database Schema — `medicine_bid`, Alembic migrations, `import_log`
+
+#### Breaking Changes
+- **Table renamed:** `drugs` → `medicine_bid`
+- **Migration system replaced:** raw SQL files in `migrations/` → Alembic (`alembic upgrade head`)
+- **Columns removed:** `status`, `contractor_group` (redundant/unused)
+
+#### New Tables
+- **`medicine_bid`** — 42-column procurement bid table matching *Danh mục thuốc trúng thầu* XLS schema from med-tech service. All columns named in English; XLS column name stored as PostgreSQL column comment.
+- **`import_log`** — tracks every file upload from med-tech: filename, source, status, rows_inserted/updated/failed, error_message, note, started_at, finished_at.
+
+#### Schema Changes
+- `medicine_bid` now includes all 38 XLS columns: bid classification (`bid_type`, `bid_package`, `bid_form`), location (`province_name`, `facility_name`), drug identity (`drug_code`, `drug_code_gy`, `dosage_form`, `packaging`), contract info (`decision_number`, `valid_from`, `valid_to`), and more.
+- `record_hash` (GENERATED UNIQUE) deduplicates on: `registration_number | active_ingredient | name | concentration | facility_code | contract_start_date | contract_end_date`
+
+#### Migrations
+- Replaced `migrations/*.sql` + `migrate.py` with **Alembic**
+- Single v1 migration: `alembic/versions/8f9881ec5d77_initial_schema.py`
+- DB stamped at `8f9881ec5d77 (head)`
+
+---
+
 ## [1.3.0] - 2026-04-14
 
 ### Full Pipeline (`ask`), REST API, and Gemini Provider

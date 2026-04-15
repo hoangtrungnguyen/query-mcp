@@ -11,6 +11,7 @@ from typing import Any, Optional
 
 import psycopg2
 import psycopg2.extras
+from psycopg2 import sql as pg_sql
 
 
 CONFIG_FILE = Path.home() / ".query-mcp" / "config.json"
@@ -126,6 +127,100 @@ class DatabaseService:
                 """
             )
             return [row[0] for row in cur.fetchall()]
+
+    def get_table_columns(self, table_name: str) -> list[dict]:
+        """Return structured column list for a table."""
+        with self.cursor() as cur:
+            cur.execute(
+                """
+                SELECT column_name, data_type
+                FROM information_schema.columns
+                WHERE table_name = %s
+                ORDER BY ordinal_position
+                """,
+                (table_name,),
+            )
+            columns = cur.fetchall()
+        if not columns:
+            raise ValueError(f"Table '{table_name}' not found or has no columns")
+        return [{"name": col_name, "type": col_type} for col_name, col_type in columns]
+
+    def get_table_data(
+        self,
+        table_name: str,
+        limit: int = 20,
+        offset: int = 0,
+        sort: str = None,
+        order: str = "asc",
+    ) -> dict:
+        """Fetch paginated rows with optional sort. Returns rows + pagination metadata."""
+        columns = self.get_table_columns(table_name)
+        col_names = [c["name"] for c in columns]
+
+        if sort and sort not in col_names:
+            raise ValueError(f"Column '{sort}' not found in table '{table_name}'")
+
+        total = self.count(table_name)
+
+        order_dir = pg_sql.SQL("DESC") if order.lower() == "desc" else pg_sql.SQL("ASC")
+        query = pg_sql.SQL("SELECT * FROM {tbl}").format(tbl=pg_sql.Identifier(table_name))
+        if sort:
+            query = pg_sql.SQL("{q} ORDER BY {col} {dir}").format(
+                q=query, col=pg_sql.Identifier(sort), dir=order_dir
+            )
+        query = pg_sql.SQL("{q} LIMIT %s OFFSET %s").format(q=query)
+
+        with self.cursor(dict_cursor=True) as cur:
+            cur.execute(query, (limit, offset))
+            rows = [dict(r) for r in cur.fetchall()]
+
+        return {
+            "success": True,
+            "table": table_name,
+            "rows": rows,
+            "pagination": {
+                "limit": limit,
+                "offset": offset,
+                "total": total,
+                "hasMore": offset + limit < total,
+            },
+        }
+
+    def get_table_stats(self, table_name: str) -> dict:
+        """Return row count, column count, and numeric column summaries."""
+        columns = self.get_table_columns(table_name)
+        total = self.count(table_name)
+
+        numeric_types = {
+            "integer", "bigint", "smallint", "numeric", "real",
+            "double precision", "decimal", "money",
+        }
+        numeric_cols = [c for c in columns if c["type"].lower() in numeric_types]
+
+        numeric_summaries = []
+        if numeric_cols:
+            with self.cursor(dict_cursor=True) as cur:
+                for col in numeric_cols:
+                    q = pg_sql.SQL(
+                        "SELECT AVG({c}) AS avg_val, MIN({c}) AS min_val, MAX({c}) AS max_val FROM {t}"
+                    ).format(c=pg_sql.Identifier(col["name"]), t=pg_sql.Identifier(table_name))
+                    cur.execute(q)
+                    row = cur.fetchone()
+                    if row:
+                        numeric_summaries.append({
+                            "field": col["name"],
+                            "avg": float(row["avg_val"]) if row["avg_val"] is not None else None,
+                            "min": float(row["min_val"]) if row["min_val"] is not None else None,
+                            "max": float(row["max_val"]) if row["max_val"] is not None else None,
+                        })
+
+        return {
+            "success": True,
+            "table": table_name,
+            "totalRows": total,
+            "columnCount": len(columns),
+            "numericSummaries": numeric_summaries,
+        }
 
     # ------------------------------------------------------------------
     # Query execution

@@ -7,10 +7,11 @@ Complete documentation for the Query MCP server.
 | Document | Purpose | Read Time |
 |----------|---------|-----------|
 | [README.md](README.md) | Start here! Setup, features, basic usage | 10 min |
-| [SETUP.md](SETUP.md) | Detailed setup and integration instructions | 10 min |
-| [API_REFERENCE.md](API_REFERENCE.md) | Complete API reference for all tools/resources | 15 min |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | System design, data flow, components | 20 min |
-| [DEPLOYMENT.md](DEPLOYMENT.md) | Production deployment, scaling, troubleshooting | 20 min |
+| [SETUP.md](docs/SETUP.md) | Detailed setup and integration instructions | 10 min |
+| [API_ENDPOINTS.md](docs/API_ENDPOINTS.md) | Complete HTTP REST API endpoint reference | 20 min |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, data flow, components | 20 min |
+| [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production deployment, scaling, troubleshooting | 20 min |
+| [DOCKER_SETUP.md](docs/DOCKER_SETUP.md) | Docker setup for local development | 15 min |
 
 ## By Use Case
 
@@ -22,8 +23,8 @@ Complete documentation for the Query MCP server.
 **Set up with my IDE/Claude**
 → Read [SETUP.md](SETUP.md)
 
-**Understand all available endpoints/parameters**
-→ Read [API_REFERENCE.md](API_REFERENCE.md)
+**Understand all available HTTP endpoints/parameters**
+→ Read [API_ENDPOINTS.md](docs/API_ENDPOINTS.md)
 
 **Understand how it works internally**
 → Read [ARCHITECTURE.md](ARCHITECTURE.md)
@@ -103,17 +104,21 @@ class TextToSQL:
 
 | Feature | Status | Details |
 |---------|--------|---------|
-| Generate SQL from natural language | ✅ | Uses Claude or Z.ai |
+| Generate SQL from natural language | ✅ | Uses Gemini, Z.ai, or Anthropic |
 | Execute SQL and return results | ✅ | Direct PostgreSQL query |
 | Combined generation + execution | ✅ | Single call for both |
 | Per-request LLM provider selection | ✅ | Override config default |
-| Multiple LLM providers | ✅ | Z.ai (default), Anthropic |
+| Multiple LLM providers | ✅ | Gemini, Z.ai, Anthropic |
 | Database schema discovery | ✅ | Auto-fetches table info |
 | Error handling | ✅ | Consistent error format |
 | Configuration management | ✅ | JSON file + env vars |
 | MCP protocol support | ✅ | Tools, resources, prompts |
+| HTTP REST API | ✅ | Full endpoint suite for web access |
+| Schema inspection endpoints | ✅ | List tables, get schema, data, stats |
+| Query history tracking | ✅ | Audit trail of all queries |
 | Claude Code integration | ✅ | Add as MCP server |
 | Claude Desktop integration | ✅ | Edit config file |
+| Docker support | ✅ | Dev container + prod deployment |
 | Production deployment | ✅ | Docker, systemd, etc. |
 | Logging (basic) | ✅ | Built-in |
 | Connection pooling | ⏳ | Recommended for scale |
@@ -299,4 +304,7 @@ A: Check logs. Implement logging wrapper (see DEPLOYMENT.md)
 A: Not built-in. Could add caching layer (see DEPLOYMENT.md)
 
 **Q: Is there a REST API?**
-A: No, only MCP protocol. Could be added in future.
+A: Yes! HTTP REST endpoints for all operations. See [API_ENDPOINTS.md](docs/API_ENDPOINTS.md) for complete reference.
+   - Text-to-SQL: `/api/ask`, `/api/query`, `/api/sql`, `/api/execute`
+   - Schema inspection: `/api/tables`, `/api/tables/{id}/schema`, `/api/tables/{id}/data`, `/api/tables/{id}/stats`
+   - Utilities: `/api/columns`, `/api/query/history`, `/api/health`

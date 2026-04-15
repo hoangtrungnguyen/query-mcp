@@ -1,8 +1,17 @@
 # Query MCP Docker Setup Guide
 
-Complete guide for running Query MCP with PostgreSQL using Docker.
+Complete guide for running Query MCP in **local development** with Docker.
+
+## Architecture Note
+
+- **Local Dev** (this guide): `query-mcp/docker-compose.yml` runs Query MCP only (assumes local postgres)
+- **Production Deploy**: Query MCP connects to postgres managed in `/home/htnguyen/Space/med-tech-workload/docker-compose.yml`
+  - postgres service defined separately, not in query-mcp
+  - Query MCP configured via `~/.query-mcp/config.json` to point to that postgres instance
 
 ## Quick Start (2 minutes)
+
+Requires: PostgreSQL running elsewhere (localhost:5432, external host, or med-tech-workload deployment).
 
 ```bash
 cd /home/htnguyen/Space/query-mcp
@@ -10,17 +19,19 @@ cd /home/htnguyen/Space/query-mcp
 # Set API key
 export QUERY_MCP_API_KEY="your-zai-api-key"
 
-# Start both PostgreSQL and Query MCP
+# Configure database (edit ~/.query-mcp/config.json to point to postgres instance)
+# Defaults: localhost:5432, user=postgres, password=postgres
+
+# Start Query MCP
 docker-compose up -d
 
-# Verify services are running
+# Verify service running
 docker ps
 docker-compose logs
 ```
 
 Access:
-- **PostgreSQL:** `localhost:5440`
-- **Query MCP:** Running, ready for MCP clients
+- **Query MCP:** Running, ready for MCP clients (no direct HTTP port exposed by default)
 
 ---
 
@@ -40,35 +51,12 @@ FROM python:3.11-slim
 
 **Image size:** ~300MB
 
-### Dockerfile.postgres (PostgreSQL)
-
-Builds PostgreSQL 15 with sample data.
-
-```dockerfile
-FROM postgres:15-alpine
-# Copy init-db.sql for automatic initialization
-# Setup health checks
-```
-
-**Image size:** ~150MB (Alpine)
-
-### init-db.sql (Sample Data)
-
-SQL script automatically runs on PostgreSQL startup.
-
-**Creates:**
-- `drugs` table with 15 sample drugs
-- `items` table with 10 sample items
-- `users` table with 10 sample users
-- `orders` table with 10 sample orders
-- Views: `active_drugs`, `drugs_by_category`, `expensive_items`
-- Indexes for performance
-
 ### docker-compose.yml (Orchestration)
 
-Defines two services:
-1. **postgres** - PostgreSQL database
-2. **query-mcp** - Query MCP server
+Defines single service:
+- **query-mcp** - Query MCP server
+
+**Note:** PostgreSQL is **not** included. Configure database connection in `~/.query-mcp/config.json` pointing to your postgres instance (local, external, or med-tech-workload deployment).
 
 ---
 
@@ -78,7 +66,8 @@ Defines two services:
 
 - Docker Desktop installed and running
 - Z.ai or Anthropic API key
-- ~500MB disk space
+- PostgreSQL instance running (local, external, or via med-tech-workload deployment)
+- ~300MB disk space (Query MCP image only)
 
 ### Step 1: Navigate to Project
 
@@ -101,7 +90,24 @@ export QUERY_MCP_API_KEY="sk-ant-your-anthropic-key"
 echo $QUERY_MCP_API_KEY
 ```
 
-### Step 3: Build Images
+### Step 3: Configure Database
+
+Edit `~/.query-mcp/config.json` to point to your postgres instance:
+
+```json
+{
+  "database": {
+    "host": "postgres.example.com",
+    "port": 5432,
+    "name": "testdb",
+    "user": "postgres",
+    "password": "postgres"
+  },
+  ...
+}
+```
+
+### Step 4: Build Image
 
 First time only:
 ```bash
@@ -110,9 +116,8 @@ docker-compose build
 
 This builds:
 - `query-mcp:latest` - Query MCP server
-- `query-mcp-postgres:latest` - PostgreSQL with sample data
 
-### Step 4: Start Services
+### Step 5: Start Service
 
 ```bash
 docker-compose up -d
@@ -120,15 +125,14 @@ docker-compose up -d
 
 **Output:**
 ```
-[+] Running 2/2
- ✓ Container query-mcp-postgres   Started
- ✓ Container query-mcp-server     Started
+[+] Running 1/1
+ ✓ Container query-mcp-server   Started
 ```
 
-### Step 5: Verify Services
+### Step 6: Verify Service
 
 ```bash
-# Check containers running
+# Check container running
 docker ps
 
 # Check logs
@@ -137,26 +141,17 @@ docker-compose logs -f
 
 **Expected logs:**
 ```
-query-mcp-postgres  | database system is ready to accept connections
-query-mcp-postgres  | Database initialized successfully!
 query-mcp-server    | Query MCP Server starting...
+query-mcp-server    | Config file: /root/.query-mcp/config.json
 ```
 
-### Step 6: Test Database Connection
+### Step 7: Test Database Connection
 
 ```bash
-# Connect to PostgreSQL
-docker exec -it query-mcp-postgres psql -U postgres -d testdb
+# Verify postgres is reachable from container
+docker exec query-mcp-server psql -h postgres.example.com -U postgres -d testdb -c "SELECT 1;"
 
-# Run a test query
-testdb=# SELECT COUNT(*) FROM drugs;
- count 
--------
-    15
-(1 row)
-
-# Exit
-testdb=# \q
+# Should return: 1 (success)
 ```
 
 ---
@@ -347,38 +342,48 @@ docker-compose up -d
 
 ## Networking
 
-### Container-to-Container Communication
+### Database Connection
 
-Services can reach each other using service names:
+Query MCP connects to PostgreSQL via `~/.query-mcp/config.json` (not docker-compose env vars).
 
+**Local postgres (host machine):**
+```json
+{
+  "database": {
+    "host": "host.docker.internal",  // or "localhost" depending on Docker setup
+    "port": 5432
+  }
+}
 ```
-query-mcp → postgres:5432 (from docker-compose.yml)
+
+**med-tech-workload deployment:**
+```json
+{
+  "database": {
+    "host": "postgres",  // service name in med-tech-workload compose network
+    "port": 5432
+  }
+}
 ```
 
-This is how Query MCP connects to PostgreSQL automatically.
+**External postgres:**
+```json
+{
+  "database": {
+    "host": "postgres.example.com",
+    "port": 5432
+  }
+}
+```
 
 ### Host-to-Container Communication
 
 From your machine:
 
 ```bash
-# PostgreSQL (port 5440)
-psql -h localhost -p 5440 -U postgres -d testdb
-
 # Query MCP
-# Accessible via MCP protocol (no direct HTTP port exposed)
-```
-
-### External Database
-
-To use external PostgreSQL instead:
-
-```yaml
-services:
-  query-mcp:
-    environment:
-      POSTGRES_HOST: external-postgres.example.com
-      POSTGRES_PORT: 5432
+# Accessible via MCP protocol (no direct HTTP port exposed by default)
+# Can add HTTP ports in docker-compose.yml if needed
 ```
 
 ---

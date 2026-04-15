@@ -356,14 +356,18 @@ Response:
 Start the server in HTTP mode for curl/REST access:
 
 ```bash
-# Start HTTP server (default port 8000)
+# Start HTTP server (default port 8001)
 python src/server.py http
 
 # Custom port
-python src/server.py http 8001
+python src/server.py http 9000
 ```
 
 ### Endpoints
+
+See [API_ENDPOINTS.md](docs/API_ENDPOINTS.md) for complete endpoint documentation.
+
+Quick reference:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -371,9 +375,18 @@ python src/server.py http 8001
 | `POST` | `/api/query` | Question → SQL → execute → raw results |
 | `POST` | `/api/sql` | Question → SQL only (no execution) |
 | `POST` | `/api/execute` | Run raw SQL query |
-| `GET` | `/health` | Health check |
+| `GET` | `/api/health` | Health check |
+| `GET` | `/api/tables` | List all tables with metadata (schema inspection) |
+| `GET` | `/api/tables/{table_id}` | Get table details |
+| `GET` | `/api/tables/{table_id}/schema` | Get table column definitions |
+| `GET` | `/api/tables/{table_id}/data` | Get paginated table data with sorting |
+| `GET` | `/api/tables/{table_id}/stats` | Get table statistics (row count, aggregates, distributions) |
+| `GET` | `/api/columns/{table_ref}` | Get column names for autocomplete |
+| `GET` | `/api/query/history` | Get query execution history |
 
 ### curl Examples
+
+Quick examples (see [API_ENDPOINTS.md](docs/API_ENDPOINTS.md) for complete reference):
 
 ```bash
 # Ask — get a text answer
@@ -386,7 +399,7 @@ curl -s -X POST http://localhost:8001/api/query \
   -H "Content-Type: application/json" \
   -d '{"user_message": "Count drugs by category", "table_name": "drugs"}'
 
-# Generate SQL only
+# Generate SQL only (no execution)
 curl -s -X POST http://localhost:8001/api/sql \
   -H "Content-Type: application/json" \
   -d '{"user_message": "Find inactive drugs", "table_name": "drugs"}'
@@ -395,6 +408,21 @@ curl -s -X POST http://localhost:8001/api/sql \
 curl -s -X POST http://localhost:8001/api/execute \
   -H "Content-Type: application/json" \
   -d '{"sql_query": "SELECT name, price FROM drugs WHERE price > 30", "limit": 5}'
+
+# List tables (schema inspection)
+curl -s http://localhost:8001/api/tables
+
+# Get table data with pagination and sorting
+curl -s "http://localhost:8001/api/tables/src_abc12345/data?limit=10&offset=0&sort=price&order=desc"
+
+# Get table statistics (row count, numeric summaries, distributions)
+curl -s http://localhost:8001/api/tables/src_abc12345/stats
+
+# Get column names for autocomplete
+curl -s http://localhost:8001/api/columns/drugs
+
+# View query execution history
+curl -s http://localhost:8001/api/query/history?limit=50
 ```
 
 ## Error Handling
@@ -460,21 +488,31 @@ Claude will:
 ## Architecture
 
 ```
-User Request (Natural Language)
+User Request (Natural Language or HTTP)
     ↓
 MCP Server (server.py)
+    ├─ MCP Stdio Protocol (for Claude integration)
+    └─ HTTP REST API (for direct HTTP access)
+         ├─ Text-to-SQL endpoints (/api/ask, /api/query, /api/sql)
+         └─ Schema inspection endpoints (/api/tables, /api/columns, etc)
     ↓
 TextToSQL Engine (text_to_sql.py)
-    ├─ LLM Provider (Z.ai or Anthropic)
+    ├─ LLM Provider (Gemini, Z.ai, or Anthropic)
     └─ DatabaseService (db_service.py)
         ├─ Schema Discovery
         ├─ Query Execution
         └─ Query History Logging
     ↓
-PostgreSQL Database
+PostgreSQL Database (local, external, or med-tech-workload deployment)
     ↓
 Response (JSON)
 ```
+
+## Deployment
+
+- **Local Development**: Run `python src/server.py` with local postgres
+- **Docker (Dev)**: See [DOCKER_SETUP.md](docs/DOCKER_SETUP.md) - docker-compose for Query MCP only (postgres managed separately)
+- **Production**: Query MCP deployed as part of med-tech-workload stack with shared postgres instance
 
 **File Structure:**
 ```

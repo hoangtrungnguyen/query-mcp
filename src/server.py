@@ -2,9 +2,11 @@
 
 import os
 import json
+import hashlib
 from pathlib import Path
 from fastmcp import FastMCP
 from text_to_sql import TextToSQL
+from db_service import DatabaseService
 
 
 # Configuration
@@ -46,6 +48,61 @@ mcp = FastMCP(
     "Query MCP",
     instructions="Convert natural language queries to PostgreSQL SQL and execute them"
 )
+
+
+def _table_id(table_name: str) -> str:
+    """Generate a stable, short ID from a table name."""
+    return "src_" + hashlib.md5(table_name.encode()).hexdigest()[:8]
+
+
+def _find_table_by_id(db: DatabaseService, table_id: str) -> str | None:
+    """Reverse-lookup a table name from its generated ID."""
+    for name in db.list_tables():
+        if _table_id(name) == table_id:
+            return name
+    return None
+
+
+def _db_service() -> DatabaseService:
+    """Get a DatabaseService from config (no LLM key needed)."""
+    config = load_config()
+    db = config.get("database", {})
+    return DatabaseService(
+        host=db.get("host", "localhost"),
+        port=int(db.get("port", 5432)),
+        name=db.get("name", "postgres"),
+        user=db.get("user", "postgres"),
+        password=db.get("password", "postgres"),
+    )
+
+
+def _get_table_metadata(db: DatabaseService, table_name: str = None) -> list:
+    """Fetch table metadata (row_count, size). If table_name provided, return single row; else all tables."""
+    from psycopg2 import sql as pg_sql
+
+    where_clause = "AND t.table_name = %s" if table_name else ""
+    params = (table_name,) if table_name else ()
+
+    with db.cursor(dict_cursor=True) as cur:
+        query = f"""
+            SELECT
+                t.table_name,
+                COALESCE(s.n_live_tup, 0) AS row_count,
+                pg_size_pretty(
+                    COALESCE(pg_total_relation_size(c.oid), 0)
+                ) AS size
+            FROM information_schema.tables t
+            LEFT JOIN pg_stat_user_tables s
+                ON s.relname = t.table_name
+            LEFT JOIN pg_class c
+                ON c.relname = t.table_name AND c.relkind = 'r'
+            WHERE t.table_schema = 'public'
+              AND t.table_type = 'BASE TABLE'
+            {where_clause}
+            ORDER BY t.table_name
+        """
+        cur.execute(query, params)
+        return cur.fetchall()
 
 
 def _get_converter(llm_provider: str = None) -> TextToSQL:
@@ -249,7 +306,7 @@ if __name__ == "__main__":
 
     import sys
     transport = sys.argv[1] if len(sys.argv) > 1 else "stdio"
-    port = int(sys.argv[2]) if len(sys.argv) > 2 else 8000
+    port = int(sys.argv[2]) if len(sys.argv) > 2 else 8001
 
     print(f"Query MCP Server starting...")
     print(f"Config file: {CONFIG_FILE}")
@@ -336,6 +393,340 @@ if __name__ == "__main__":
         @mcp.custom_route("/health", methods=["OPTIONS"])
         async def health_options(request: Request) -> JSONResponse:
             return JSONResponse({"status": "ok"})
+
+        @mcp.custom_route("/api/health", methods=["GET"])
+        async def api_health(request: Request) -> JSONResponse:
+            return JSONResponse({"status": "ok"})
+
+        # ------------------------------------------------------------------
+        # Tables endpoints
+        # ------------------------------------------------------------------
+
+        @mcp.custom_route("/api/tables", methods=["GET"])
+        async def api_tables_list(request: Request) -> JSONResponse:
+            search = request.query_params.get("search", "").lower()
+            status_filter = request.query_params.get("status", "")
+            try:
+                db = _db_service()
+                rows = _get_table_metadata(db)
+
+                result = []
+                for row in rows:
+                    name = row["table_name"]
+                    if search and search not in name.lower():
+                        continue
+                    result.append({
+                        "id": _table_id(name),
+                        "name": name,
+                        "format": "TABLE",
+                        "rows": f"{row['row_count']:,}",
+                        "size": row["size"] or "—",
+                        "status": "active",
+                        "icon": "table_chart",
+                        "color": "#adc6ff",
+                    })
+
+                if status_filter and status_filter != "active":
+                    result = []
+
+                return _json_response({"data": result, "count": len(result)})
+            except Exception as e:
+                return _json_response({"success": False, "error": str(e)}, 500)
+
+        @mcp.custom_route("/api/tables/{table_id}", methods=["GET"])
+        async def api_table_detail(request: Request) -> JSONResponse:
+            table_id = request.path_params["table_id"]
+            try:
+                db = _db_service()
+                table_name = _find_table_by_id(db, table_id)
+                if not table_name:
+                    return _json_response({"error": "Table not found"}, 404)
+
+                rows = _get_table_metadata(db, table_name)
+                if not rows:
+                    return _json_response({"error": "Table not found"}, 404)
+
+                row = rows[0]
+                return _json_response({
+                    "id": table_id,
+                    "name": row["table_name"],
+                    "format": "TABLE",
+                    "rows": f"{row['row_count']:,}",
+                    "size": row["size"] or "—",
+                    "status": "active",
+                    "icon": "table_chart",
+                    "color": "#adc6ff",
+                })
+            except Exception as e:
+                return _json_response({"success": False, "error": str(e)}, 500)
+
+        @mcp.custom_route("/api/tables/{table_id}/schema", methods=["GET"])
+        async def api_table_schema(request: Request) -> JSONResponse:
+            table_id = request.path_params["table_id"]
+            try:
+                db = _db_service()
+                table_name = _find_table_by_id(db, table_id)
+                if not table_name:
+                    return _json_response({"error": "Table not found"}, 404)
+
+                with db.cursor(dict_cursor=True) as cur:
+                    cur.execute("""
+                        SELECT
+                            c.ordinal_position,
+                            c.column_name,
+                            c.data_type,
+                            c.is_nullable,
+                            COALESCE((
+                                SELECT TRUE
+                                FROM information_schema.table_constraints tc
+                                JOIN information_schema.key_column_usage kcu
+                                    ON tc.constraint_name = kcu.constraint_name
+                                    AND tc.table_name = kcu.table_name
+                                WHERE tc.table_name = c.table_name
+                                  AND tc.constraint_type = 'PRIMARY KEY'
+                                  AND kcu.column_name = c.column_name
+                                LIMIT 1
+                            ), FALSE) AS is_primary_key
+                        FROM information_schema.columns c
+                        WHERE c.table_name = %s
+                        ORDER BY c.ordinal_position
+                    """, (table_name,))
+                    columns = [dict(r) for r in cur.fetchall()]
+
+                return _json_response({
+                    "tableId": table_id,
+                    "tableName": table_name,
+                    "columns": columns,
+                })
+            except Exception as e:
+                return _json_response({"success": False, "error": str(e)}, 500)
+
+        @mcp.custom_route("/api/tables/{table_id}/data", methods=["GET"])
+        async def api_table_data(request: Request) -> JSONResponse:
+            from psycopg2 import sql as pg_sql
+            table_id = request.path_params["table_id"]
+            try:
+                limit = min(int(request.query_params.get("limit", 20)), 1000)
+                offset = max(int(request.query_params.get("offset", 0)), 0)
+                sort = request.query_params.get("sort", "")
+                order = request.query_params.get("order", "asc").upper()
+                if order not in ("ASC", "DESC"):
+                    order = "ASC"
+
+                db = _db_service()
+                table_name = _find_table_by_id(db, table_id)
+                if not table_name:
+                    return _json_response({"error": "Table not found"}, 404)
+
+                # Validate sort column against schema to prevent SQL injection
+                if sort:
+                    with db.cursor() as cur:
+                        cur.execute("""
+                            SELECT column_name FROM information_schema.columns
+                            WHERE table_name = %s
+                        """, (table_name,))
+                        valid_cols = {r[0] for r in cur.fetchall()}
+                    if sort not in valid_cols:
+                        sort = ""
+
+                # Total row count (parameterized)
+                with db.cursor() as cur:
+                    count_sql = pg_sql.SQL("SELECT COUNT(*) FROM {tbl}").format(
+                        tbl=pg_sql.Identifier(table_name)
+                    )
+                    cur.execute(count_sql)
+                    total = cur.fetchone()[0]
+
+                # Data query with optional sort (parameterized)
+                data_sql = pg_sql.SQL("SELECT * FROM {tbl}").format(
+                    tbl=pg_sql.Identifier(table_name)
+                )
+                if sort:
+                    data_sql = pg_sql.SQL("{q} ORDER BY {col} {dir}").format(
+                        q=data_sql,
+                        col=pg_sql.Identifier(sort),
+                        dir=pg_sql.SQL(order)
+                    )
+                data_sql = pg_sql.SQL("{q} LIMIT %s OFFSET %s").format(q=data_sql)
+
+                with db.cursor(dict_cursor=True) as cur:
+                    cur.execute(data_sql, (limit, offset))
+                    data_rows = [dict(r) for r in cur.fetchall()]
+
+                return _json_response({
+                    "tableId": table_id,
+                    "rows": data_rows,
+                    "pagination": {
+                        "limit": limit,
+                        "offset": offset,
+                        "total": total,
+                        "hasMore": offset + limit < total,
+                    },
+                })
+            except Exception as e:
+                return _json_response({"success": False, "error": str(e)}, 500)
+
+        @mcp.custom_route("/api/tables/{table_id}/stats", methods=["GET"])
+        async def api_table_stats(request: Request) -> JSONResponse:
+            from psycopg2 import sql as pg_sql
+            table_id = request.path_params["table_id"]
+            _DIST_COLORS = ["#4edea3", "#adc6ff", "#ffb3b0", "#ffd280", "#c2c6d6", "#8c909f"]
+            _NUMERIC_TYPES = {
+                "integer", "bigint", "smallint", "numeric", "decimal",
+                "real", "double precision", "money",
+            }
+            _TEXT_TYPES = {
+                "character varying", "varchar", "text", "char", "character", "boolean",
+            }
+            try:
+                db = _db_service()
+                table_name = _find_table_by_id(db, table_id)
+                if not table_name:
+                    return _json_response({"error": "Table not found"}, 404)
+
+                with db.cursor(dict_cursor=True) as cur:
+                    cur.execute("""
+                        SELECT column_name, data_type
+                        FROM information_schema.columns
+                        WHERE table_name = %s
+                        ORDER BY ordinal_position
+                    """, (table_name,))
+                    columns = [dict(r) for r in cur.fetchall()]
+
+                # Total row count (parameterized)
+                with db.cursor() as cur:
+                    count_sql = pg_sql.SQL("SELECT COUNT(*) FROM {tbl}").format(
+                        tbl=pg_sql.Identifier(table_name)
+                    )
+                    cur.execute(count_sql)
+                    total_rows = cur.fetchone()[0]
+
+                with db.cursor() as cur:
+                    cur.execute(
+                        "SELECT pg_size_pretty(pg_total_relation_size(%s))",
+                        (table_name,)
+                    )
+                    size = cur.fetchone()[0] or "—"
+
+                # Numeric summaries (up to 5 columns, parameterized)
+                numeric_cols = [
+                    c["column_name"] for c in columns
+                    if c["data_type"] in _NUMERIC_TYPES
+                ][:5]
+                numeric_summaries = []
+                for col in numeric_cols:
+                    with db.cursor() as cur:
+                        stats_sql = pg_sql.SQL(
+                            "SELECT AVG({c}), MIN({c}), MAX({c}) FROM {tbl}"
+                        ).format(
+                            c=pg_sql.Identifier(col),
+                            tbl=pg_sql.Identifier(table_name)
+                        )
+                        cur.execute(stats_sql)
+                        avg, mn, mx = cur.fetchone()
+                    if avg is not None:
+                        numeric_summaries.append({
+                            "field": col,
+                            "avg": float(avg),
+                            "min": float(mn),
+                            "max": float(mx),
+                        })
+
+                # Distributions for low-cardinality text columns (up to 3, parameterized)
+                cat_cols = [
+                    c["column_name"] for c in columns
+                    if c["data_type"] in _TEXT_TYPES
+                ][:3]
+                distributions = {}
+                for col in cat_cols:
+                    with db.cursor() as cur:
+                        distinct_sql = pg_sql.SQL(
+                            "SELECT COUNT(DISTINCT {c}) FROM {tbl}"
+                        ).format(
+                            c=pg_sql.Identifier(col),
+                            tbl=pg_sql.Identifier(table_name)
+                        )
+                        cur.execute(distinct_sql)
+                        if cur.fetchone()[0] > 20:
+                            continue
+                    with db.cursor(dict_cursor=True) as cur:
+                        dist_sql = pg_sql.SQL("""
+                            SELECT {c} AS label, COUNT(*) AS count
+                            FROM {tbl}
+                            WHERE {c} IS NOT NULL
+                            GROUP BY {c}
+                            ORDER BY COUNT(*) DESC
+                            LIMIT 10
+                        """).format(
+                            c=pg_sql.Identifier(col),
+                            tbl=pg_sql.Identifier(table_name)
+                        )
+                        cur.execute(dist_sql)
+                        dist_rows = [dict(r) for r in cur.fetchall()]
+                    if dist_rows:
+                        distributions[col] = [
+                            {
+                                "label": str(r["label"]),
+                                "count": r["count"],
+                                "percent": int(r["count"] * 100 / max(total_rows, 1)),
+                                "color": _DIST_COLORS[i % len(_DIST_COLORS)],
+                            }
+                            for i, r in enumerate(dist_rows)
+                        ]
+
+                return _json_response({
+                    "tableId": table_id,
+                    "totalRows": total_rows,
+                    "columnCount": len(columns),
+                    "size": size,
+                    "format": "PostgreSQL",
+                    "numericSummaries": numeric_summaries,
+                    "distributions": distributions,
+                })
+            except Exception as e:
+                return _json_response({"success": False, "error": str(e)}, 500)
+
+        # ------------------------------------------------------------------
+        # Columns endpoint (autocomplete support)
+        # ------------------------------------------------------------------
+
+        @mcp.custom_route("/api/columns/{table_ref}", methods=["GET"])
+        async def api_columns(request: Request) -> JSONResponse:
+            table_ref = request.path_params["table_ref"]
+            try:
+                db = _db_service()
+                # Accept either a table ID or a plain table name
+                table_name = _find_table_by_id(db, table_ref) or table_ref
+                with db.cursor() as cur:
+                    cur.execute("""
+                        SELECT column_name
+                        FROM information_schema.columns
+                        WHERE table_name = %s
+                        ORDER BY ordinal_position
+                    """, (table_name,))
+                    columns = [r[0] for r in cur.fetchall()]
+                if not columns:
+                    return _json_response(
+                        {"error": f"Table '{table_ref}' not found"}, 404
+                    )
+                return _json_response({"tableName": table_name, "columns": columns})
+            except Exception as e:
+                return _json_response({"success": False, "error": str(e)}, 500)
+
+        # ------------------------------------------------------------------
+        # Query history endpoint
+        # ------------------------------------------------------------------
+
+        @mcp.custom_route("/api/query/history", methods=["GET"])
+        async def api_query_history(request: Request) -> JSONResponse:
+            session_id = request.query_params.get("conversationId")
+            limit = int(request.query_params.get("limit", 50))
+            try:
+                db = _db_service()
+                history = db.get_query_history(limit=limit, session_id=session_id)
+                return _json_response({"conversations": history, "count": len(history)})
+            except Exception as e:
+                return _json_response({"success": False, "error": str(e)}, 500)
 
         # Add CORS middleware
         http_app = mcp.http_app(transport="streamable-http")

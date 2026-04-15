@@ -9,6 +9,7 @@ Complete documentation for the Query MCP server.
 | [README.md](README.md) | Start here! Setup, features, basic usage | 10 min |
 | [SETUP.md](docs/SETUP.md) | Detailed setup and integration instructions | 10 min |
 | [API_ENDPOINTS.md](docs/API_ENDPOINTS.md) | Complete HTTP REST API endpoint reference | 20 min |
+| [TEST_CASES.md](docs/TEST_CASES.md) | 28 test cases with curl examples | 15 min |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, data flow, components | 20 min |
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production deployment, scaling, troubleshooting | 20 min |
 | [DOCKER_SETUP.md](docs/DOCKER_SETUP.md) | Docker setup for local development | 15 min |

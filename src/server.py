@@ -3,10 +3,18 @@
 import os
 import json
 import hashlib
+import logging
 from pathlib import Path
 from fastmcp import FastMCP
 from text_to_sql import TextToSQL
 from db_service import DatabaseService
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(levelname)s] %(asctime)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 
 # Configuration
@@ -341,6 +349,7 @@ if __name__ == "__main__":
         @mcp.custom_route("/api/ask", methods=["POST"])
         async def api_ask(request: Request) -> JSONResponse:
             body = await _parse_body(request)
+            logger.info(f"POST /api/ask - Payload: {json.dumps(body) if body else 'None'}")
             if not body or "user_message" not in body or "table_name" not in body:
                 return _json_response({"success": False, "error": "Required: user_message, table_name"}, 400)
             try:
@@ -353,6 +362,7 @@ if __name__ == "__main__":
         @mcp.custom_route("/api/query", methods=["POST"])
         async def api_query(request: Request) -> JSONResponse:
             body = await _parse_body(request)
+            logger.info(f"POST /api/query - Payload: {json.dumps(body) if body else 'None'}")
             if not body or "user_message" not in body or "table_name" not in body:
                 return _json_response({"success": False, "error": "Required: user_message, table_name"}, 400)
             try:
@@ -365,6 +375,7 @@ if __name__ == "__main__":
         @mcp.custom_route("/api/sql", methods=["POST"])
         async def api_sql(request: Request) -> JSONResponse:
             body = await _parse_body(request)
+            logger.info(f"POST /api/sql - Payload: {json.dumps(body) if body else 'None'}")
             if not body or "user_message" not in body or "table_name" not in body:
                 return _json_response({"success": False, "error": "Required: user_message, table_name"}, 400)
             try:
@@ -377,6 +388,7 @@ if __name__ == "__main__":
         @mcp.custom_route("/api/execute", methods=["POST"])
         async def api_execute(request: Request) -> JSONResponse:
             body = await _parse_body(request)
+            logger.info(f"POST /api/execute - Payload: {json.dumps(body) if body else 'None'}")
             if not body or "sql_query" not in body:
                 return _json_response({"success": False, "error": "Required: sql_query"}, 400)
             try:
@@ -406,6 +418,7 @@ if __name__ == "__main__":
         async def api_tables_list(request: Request) -> JSONResponse:
             search = request.query_params.get("search", "").lower()
             status_filter = request.query_params.get("status", "")
+            logger.info(f"GET /api/tables - Query params: search='{search}', status='{status_filter}'")
             try:
                 db = _db_service()
                 rows = _get_table_metadata(db)
@@ -436,6 +449,7 @@ if __name__ == "__main__":
         @mcp.custom_route("/api/tables/{table_id}", methods=["GET"])
         async def api_table_detail(request: Request) -> JSONResponse:
             table_id = request.path_params["table_id"]
+            logger.info(f"GET /api/tables/{table_id}")
             try:
                 db = _db_service()
                 table_name = _find_table_by_id(db, table_id)
@@ -463,6 +477,7 @@ if __name__ == "__main__":
         @mcp.custom_route("/api/tables/{table_id}/schema", methods=["GET"])
         async def api_table_schema(request: Request) -> JSONResponse:
             table_id = request.path_params["table_id"]
+            logger.info(f"GET /api/tables/{table_id}/schema")
             try:
                 db = _db_service()
                 table_name = _find_table_by_id(db, table_id)
@@ -505,6 +520,11 @@ if __name__ == "__main__":
         async def api_table_data(request: Request) -> JSONResponse:
             from psycopg2 import sql as pg_sql
             table_id = request.path_params["table_id"]
+            limit = request.query_params.get("limit", "20")
+            offset = request.query_params.get("offset", "0")
+            sort = request.query_params.get("sort", "")
+            order = request.query_params.get("order", "asc")
+            logger.info(f"GET /api/tables/{table_id}/data - limit={limit}, offset={offset}, sort='{sort}', order={order}")
             try:
                 limit = min(int(request.query_params.get("limit", 20)), 1000)
                 offset = max(int(request.query_params.get("offset", 0)), 0)
@@ -570,6 +590,7 @@ if __name__ == "__main__":
         async def api_table_stats(request: Request) -> JSONResponse:
             from psycopg2 import sql as pg_sql
             table_id = request.path_params["table_id"]
+            logger.info(f"GET /api/tables/{table_id}/stats")
             _DIST_COLORS = ["#4edea3", "#adc6ff", "#ffb3b0", "#ffd280", "#c2c6d6", "#8c909f"]
             _NUMERIC_TYPES = {
                 "integer", "bigint", "smallint", "numeric", "decimal",
@@ -693,6 +714,7 @@ if __name__ == "__main__":
         @mcp.custom_route("/api/columns/{table_ref}", methods=["GET"])
         async def api_columns(request: Request) -> JSONResponse:
             table_ref = request.path_params["table_ref"]
+            logger.info(f"GET /api/columns/{table_ref}")
             try:
                 db = _db_service()
                 # Accept either a table ID or a plain table name
@@ -721,6 +743,7 @@ if __name__ == "__main__":
         async def api_query_history(request: Request) -> JSONResponse:
             session_id = request.query_params.get("conversationId")
             limit = int(request.query_params.get("limit", 50))
+            logger.info(f"GET /api/query/history - conversationId='{session_id}', limit={limit}")
             try:
                 db = _db_service()
                 history = db.get_query_history(limit=limit, session_id=session_id)

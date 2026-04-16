@@ -421,7 +421,7 @@ if __name__ == "__main__":
             logger.info(f"GET /api/tables - Query params: search='{search}', status='{status_filter}'")
             try:
                 db = _db_service()
-                rows = _get_table_metadata(db)
+                rows = _get_table_metadata(db, table_name="medicine_bid")
 
                 result = []
                 for row in rows:
@@ -461,6 +461,31 @@ if __name__ == "__main__":
                     return _json_response({"error": "Table not found"}, 404)
 
                 row = rows[0]
+
+                with db.cursor(dict_cursor=True) as cur:
+                    cur.execute("""
+                        SELECT
+                            a.attname                                   AS column_name,
+                            pg_catalog.format_type(a.atttypid, a.atttypmod) AS data_type,
+                            col_description(c.oid, a.attnum)            AS comment,
+                            NOT a.attnotnull                             AS nullable
+                        FROM pg_class c
+                        JOIN pg_attribute a ON a.attrelid = c.oid
+                        WHERE c.relname = %s
+                          AND a.attnum > 0
+                          AND NOT a.attisdropped
+                        ORDER BY a.attnum
+                    """, (row["table_name"],))
+                    columns = [
+                        {
+                            "name": col["column_name"],
+                            "type": col["data_type"],
+                            "comment": col["comment"],
+                            "nullable": col["nullable"],
+                        }
+                        for col in cur.fetchall()
+                    ]
+
                 return _json_response({
                     "id": table_id,
                     "name": row["table_name"],
@@ -470,6 +495,7 @@ if __name__ == "__main__":
                     "status": "active",
                     "icon": "table_chart",
                     "color": "#adc6ff",
+                    "columns": columns,
                 })
             except Exception as e:
                 return _json_response({"success": False, "error": str(e)}, 500)

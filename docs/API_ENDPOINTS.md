@@ -358,35 +358,63 @@ curl -s "http://localhost:8001/api/tables?status=active"
 ---
 
 ### GET `/api/tables/{table_id}`
-**Get single table metadata**.
+**Get single table metadata including all columns with their types and comments.**
 
 **Path Parameters:**
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `table_id` | string | Table ID from `/api/tables` (e.g., "src_a1b2c3d4") |
+| `table_id` | string | Table ID from `/api/tables` (e.g., `"src_03630eec"`) |
 
 **Response (HTTP 200):**
 ```json
 {
-  "id": "src_a1b2c3d4",
-  "name": "drugs",
+  "id": "src_03630eec",
+  "name": "medicine_bid",
   "format": "TABLE",
-  "rows": "15",
-  "size": "64 kB",
+  "rows": "1,988",
+  "size": "1760 kB",
   "status": "active",
   "icon": "table_chart",
-  "color": "#adc6ff"
+  "color": "#adc6ff",
+  "columns": [
+    {
+      "name": "id",
+      "type": "integer",
+      "comment": null,
+      "nullable": false
+    },
+    {
+      "name": "name",
+      "type": "text",
+      "comment": "Tên thuốc",
+      "nullable": false
+    },
+    {
+      "name": "registration_number",
+      "type": "text",
+      "comment": "Số DK (số đăng ký)",
+      "nullable": true
+    }
+  ]
 }
 ```
 
-**Error Response (HTTP 404 - Table not found):**
+**Column fields:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Column name |
+| `type` | string | PostgreSQL data type (e.g. `"text"`, `"integer"`, `"numeric(10,2)"`) |
+| `comment` | string\|null | Column comment — Vietnamese name for `medicine_bid` columns, XLS source column name for imported fields; `null` if no comment set |
+| `nullable` | boolean | Whether the column accepts NULL values |
+
+**Error Response (HTTP 404):**
 ```json
 {
   "error": "Table not found"
 }
 ```
 
-**Error Response (HTTP 500 - Server error):**
+**Error Response (HTTP 500):**
 ```json
 {
   "success": false,
@@ -396,7 +424,7 @@ curl -s "http://localhost:8001/api/tables?status=active"
 
 **curl Example:**
 ```bash
-curl -s http://localhost:8001/api/tables/src_a1b2c3d4
+curl -s http://localhost:8001/api/tables/src_03630eec
 ```
 
 ---

@@ -19,9 +19,14 @@ cat > /root/.query-mcp/config.json <<EOF
 }
 EOF
 
-# Run Alembic migrations
-# If schema tables already exist but alembic_version is unset,
-# stamp as head to avoid re-creating existing tables.
+# ============================================================
+# ALEMBIC MIGRATIONS - ALWAYS RUN BEFORE SERVICE STARTUP
+# ============================================================
+echo "=========================================="
+echo "MIGRATION PHASE: Starting..."
+echo "=========================================="
+
+# Determine migration strategy
 echo "Checking migration state..."
 python - <<'PYEOF'
 import json, sys, time
@@ -32,30 +37,32 @@ cfg = json.loads((Path.home() / ".query-mcp/config.json").read_text())
 db = cfg["database"]
 
 # Retry database connection with exponential backoff
-max_retries = 3
+max_retries = 5
 conn = None
 for attempt in range(1, max_retries + 1):
     try:
         conn = psycopg2.connect(
             host=db["host"], port=int(db["port"]),
             dbname=db["name"], user=db["user"], password=db["password"],
-            connect_timeout=5
+            connect_timeout=10
         )
+        print(f"✅ Database connected on attempt {attempt}")
         break
     except Exception as e:
-        print(f"DB connection attempt {attempt}/{max_retries} failed: {e}")
+        print(f"⚠️  DB connection attempt {attempt}/{max_retries} failed: {e}")
         if attempt < max_retries:
             wait_time = 2 ** attempt
-            print(f"Retrying in {wait_time}s...")
+            print(f"   Retrying in {wait_time}s...")
             time.sleep(wait_time)
         else:
-            print("Failed to connect to database. Will attempt migrations anyway.")
+            print("❌ Failed to connect to database after {max_retries} attempts.")
+            print("   Will still attempt migrations (may fail).")
             sys.exit(0)
 
 try:
     cur = conn.cursor()
 
-    # Check if alembic_version table exists and has a revision
+    # Check if alembic_version table exists
     cur.execute("""
         SELECT EXISTS (
             SELECT FROM information_schema.tables
@@ -63,49 +70,72 @@ try:
         )
     """)
     version_table_exists = cur.fetchone()[0]
+    print(f"   alembic_version table exists: {version_table_exists}")
 
     stamped = False
     if version_table_exists:
-        cur.execute("SELECT version_num FROM alembic_version")
-        result = cur.fetchone()
-        stamped = result is not None
+        cur.execute("SELECT COUNT(*) FROM alembic_version")
+        stamped = cur.fetchone()[0] > 0
+        print(f"   alembic_version is tracked: {stamped}")
 
-    # Exit 0 = run upgrade head; Exit 2 = stamp head (tables exist, not tracked)
+    # Check for existing schema
     if not stamped:
-        # Check if medicine_bid already exists
         cur.execute("""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables
                 WHERE table_schema = 'public' AND table_name = 'medicine_bid'
             )
         """)
-        table_exists = cur.fetchone()[0]
-        if table_exists:
-            print("Schema exists but not tracked by Alembic — stamping as head.")
+        schema_exists = cur.fetchone()[0]
+        print(f"   medicine_bid table exists: {schema_exists}")
+
+        if schema_exists:
+            print("⚠️  Schema exists but not tracked by Alembic → STAMP mode")
             cur.close()
             conn.close()
             sys.exit(2)
 
+    print("→ Running UPGRADE mode (new or clean database)")
     cur.close()
     conn.close()
     sys.exit(0)
+
 except Exception as e:
-    print(f"Migration check failed: {e}")
+    print(f"❌ Migration check error: {e}")
     if conn:
         conn.close()
-    sys.exit(0)  # Continue with upgrades even if check fails
+    print("→ Attempting UPGRADE mode anyway")
+    sys.exit(0)
 PYEOF
 
-EXIT_CODE=$?
-if [ "$EXIT_CODE" = "2" ]; then
-    echo "Stamping migration as head..."
-    alembic stamp head || echo "Warning: alembic stamp head failed"
+MIGRATION_MODE=$?
+
+# Always run migrations - either stamp or upgrade
+echo ""
+if [ "$MIGRATION_MODE" = "2" ]; then
+    echo "MIGRATION STRATEGY: STAMP (tables exist, mark as tracked)"
+    echo "Running: alembic stamp head"
+    alembic stamp head
+    MIGRATION_EXIT=$?
 else
-    echo "Running migrations..."
-    alembic upgrade head || echo "Warning: alembic upgrade head failed"
+    echo "MIGRATION STRATEGY: UPGRADE (create/update schema)"
+    echo "Running: alembic upgrade head"
+    alembic upgrade head
+    MIGRATION_EXIT=$?
 fi
 
-echo "Migrations complete."
+echo ""
+if [ "$MIGRATION_EXIT" = "0" ]; then
+    echo "✅ MIGRATIONS SUCCESSFUL"
+else
+    echo "❌ MIGRATIONS FAILED (exit code: $MIGRATION_EXIT)"
+    echo "⚠️  Attempting to start service anyway..."
+fi
+
+echo "=========================================="
+echo "MIGRATION PHASE: Complete"
+echo "=========================================="
+echo ""
 
 # Start server
 exec python -u src/server.py http ${PORT:-8080}

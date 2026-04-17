@@ -1,6 +1,27 @@
 version: '3.9'
 
 services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: query-mcp-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: query_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - query-mcp-network
+
   # Query MCP Server
   query-mcp:
     build:
@@ -11,12 +32,22 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      QUERY_MCP_API_KEY: ${QUERY_MCP_API_KEY}
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      DATABASE_NAME: query_db
+      PYTHONUNBUFFERED: 1
     ports:
       - "8000:8000"
     volumes:
       - ~/.query-mcp:/root/.query-mcp
-    command: python src/server.py
+    networks:
+      - query-mcp-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
 
 networks:
   query-mcp-network:

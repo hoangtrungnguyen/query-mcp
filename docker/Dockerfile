@@ -12,19 +12,28 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application files
-COPY src/server.py .
-COPY src/text_to_sql.py .
+COPY src/ ./src/
+COPY alembic/ ./alembic/
+COPY alembic.ini .
 
 # Create config directory
 RUN mkdir -p /root/.query-mcp
 
+# Copy entrypoint script
+COPY docker/entrypoint.sh .
+RUN chmod +x entrypoint.sh
+
 # Environment variables
-ENV QUERY_MCP_API_KEY=${QUERY_MCP_API_KEY}
 ENV PYTHONUNBUFFERED=1
+ENV DATABASE_HOST=postgres
+ENV DATABASE_PORT=5432
+ENV DATABASE_USER=postgres
+ENV DATABASE_PASSWORD=postgres
+ENV DATABASE_NAME=query_db
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD python -c "import sys; sys.exit(0)" || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+  CMD pg_isready -h ${DATABASE_HOST} -p ${DATABASE_PORT} -U ${DATABASE_USER} || exit 1
 
-# Run the server
-CMD ["python", "-u", "server.py"]
+# Run entrypoint
+ENTRYPOINT ["./entrypoint.sh"]

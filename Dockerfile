@@ -30,6 +30,8 @@ COPY --from=builder /root/.local /root/.local
 COPY src/ ./src/
 COPY alembic/ ./alembic/
 COPY alembic.ini .
+COPY entrypoint-cloudrun.sh .
+RUN chmod +x entrypoint-cloudrun.sh
 
 # Set Python path for user-installed packages
 ENV PATH=/root/.local/bin:$PATH
@@ -39,12 +41,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 # Cloud Run port (default 8080)
 ENV PORT=8080
 
-# Expose port
 EXPOSE 8080
 
-# Health check - removed for Cloud Run (uses liveness probes)
-# Cloud Run manages health checks automatically
-
-# Run server with HTTP transport on Cloud Run port
-# Defaults to PORT=8080 env var, or can be overridden
-CMD ["sh", "-c", "python -u src/server.py http ${PORT:-8080}"]
+# Writes config from env vars, runs alembic migrations, then starts server
+CMD ["./entrypoint-cloudrun.sh"]

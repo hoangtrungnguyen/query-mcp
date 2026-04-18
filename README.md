@@ -1,51 +1,134 @@
-# Query MCP - Text-to-SQL Server
+# Query MCP
 
-MCP (Model Context Protocol) server that converts natural language queries to PostgreSQL SQL using multiple LLM providers (Z.ai, Anthropic Claude).
+A Model Context Protocol (MCP) server that converts natural language queries into PostgreSQL SQL using multiple LLM providers. It bridges natural language understanding and relational database operations — letting users query databases without writing SQL.
 
-**Features:**
-- ✨ Natural language → SQL query conversion
-- 🔄 SQL generation & execution in one call
-- 🔌 MCP-compatible for Claude integration
-- 🎯 Per-request LLM provider selection
-- 🐘 PostgreSQL database support
-- ⚙️ Flexible configuration (env vars or JSON)
-- 📦 Versioned SQL migrations
-- 🗄️ Database service layer with connection management
-- 📊 Query history tracking & audit log
+---
 
-## Quick Start
+## Table of Contents
+
+1. [Architecture](#architecture)
+2. [Features](#features)
+3. [Setup](#setup)
+4. [Configuration](#configuration)
+5. [MCP Tools](#mcp-tools)
+6. [REST API](#rest-api)
+7. [Database Service](#database-service)
+8. [Query History](#query-history)
+9. [Migrations](#migrations)
+10. [Deployment](#deployment)
+11. [Troubleshooting](#troubleshooting)
+
+---
+
+## Architecture
+
+```
+User Request (Natural Language or HTTP)
+          │
+          ▼
+  ┌───────────────────────────────────┐
+  │         server.py (MCP + HTTP)    │
+  │  ┌─────────────┐ ┌─────────────┐ │
+  │  │  MCP stdio  │ │  HTTP REST  │ │
+  │  │  (Claude)   │ │  (curl/web) │ │
+  │  └─────────────┘ └─────────────┘ │
+  └──────────────┬────────────────────┘
+                 │
+                 ▼
+  ┌───────────────────────────────────┐
+  │      text_to_sql.py (Engine)      │
+  │  ┌──────────┐  ┌───────────────┐ │
+  │  │  LLM API │  │ Schema Fetch  │ │
+  │  │ (Gemini/ │  │ (introspect)  │ │
+  │  │  Z.ai /  │  └───────────────┘ │
+  │  │Anthropic)│                    │
+  │  └──────────┘                    │
+  └──────────────┬────────────────────┘
+                 │
+                 ▼
+  ┌───────────────────────────────────┐
+  │      db_service.py (DB Layer)     │
+  │  Schema · Execution · History     │
+  └──────────────┬────────────────────┘
+                 │
+                 ▼
+          PostgreSQL Database
+```
+
+### Pipeline
+
+The core workflow for a natural language query:
+
+1. **Schema Discovery** — introspect the target table to build an LLM prompt with column types and names
+2. **SQL Generation** — send schema + user question to the LLM; receive SQL or a `CLARIFY:` message when the query is ambiguous
+3. **Execution** — run the generated SQL against PostgreSQL with parameterized queries
+4. **Summarization** — optionally pass results back to the LLM for a natural language answer
+5. **Audit Logging** — record query, SQL, timing, provider, and success status in `query_history`
+
+---
+
+## Features
+
+| Category | Detail |
+|---|---|
+| **LLM Providers** | Google Gemini (default), Z.ai GLM, Anthropic Claude |
+| **Per-request override** | Choose LLM provider per call without changing config |
+| **Protocols** | MCP stdio (Claude) + HTTP REST (curl/web) |
+| **Ambiguity handling** | Auto-detects unclear queries and asks for clarification |
+| **Multilingual** | Specify response language per request |
+| **Security** | Parameterized queries, schema validation before dynamic SQL |
+| **Audit trail** | Full query history with timing, provider, row count |
+| **Schema introspection** | List tables, columns, stats, paginated data |
+| **Migrations** | Alembic-managed schema versioning |
+
+---
+
+## Setup
+
+**Requirements:** Python 3.8+, PostgreSQL
 
 ```bash
-# 1. Install
+# Clone and install
 cd /home/htnguyen/Space/query-mcp
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# 2. Configure API key (Gemini default)
+# Set your LLM API key (Gemini is free-tier available)
 export QUERY_MCP_API_KEY="your-gemini-api-key"
 
-# 3. Configure database (optional, defaults to localhost:5432)
-# Edit ~/.query-mcp/config.json
+# Run migrations
+alembic upgrade head
 
-# 4. Run
-python server.py
+# Start the MCP server (stdio mode for Claude)
+python src/server.py
+
+# Or start in HTTP mode
+python src/server.py http 8001
 ```
+
+### Claude Code Integration
+
+1. Open Claude Code settings → MCP Servers → Add new server
+2. Set:
+   - **Command**: `python`
+   - **Args**: `/home/htnguyen/Space/query-mcp/src/server.py`
+   - **Env**: `QUERY_MCP_API_KEY=your-api-key`
+3. Click Connect
+
+Once registered, ask Claude naturally: *"Show me the top 10 most expensive drugs"* and it will generate SQL, execute it, and return a readable answer.
+
+---
 
 ## Configuration
 
-### Priority Order (highest to lowest)
-1. **Environment Variable** `QUERY_MCP_API_KEY` (recommended)
-2. **Config File** `~/.query-mcp/config.json`
+### Priority Order
 
-### Environment Variables
-```bash
-export QUERY_MCP_API_KEY="your-api-key"      # Gemini, Z.ai, or Anthropic key
-```
+1. `QUERY_MCP_API_KEY` environment variable *(recommended)*
+2. `~/.query-mcp/config.json` *(auto-created on first run)*
 
-### Config File: `~/.query-mcp/config.json`
+### Config File Structure
 
-Auto-created on first run with defaults:
 ```json
 {
   "database": {
@@ -63,40 +146,33 @@ Auto-created on first run with defaults:
 }
 ```
 
-**Database fields:**
-- `host` - PostgreSQL server hostname
-- `port` - PostgreSQL port (default 5432)
-- `name` - Database name
-- `user` - Database user
-- `password` - Database password
+### LLM Providers
 
-**LLM Providers:**
-- `gemini` (default) - Google Gemini models
-  - Models: `gemini-2.5-flash`, `gemini-2.0-flash`
-  - API key: https://aistudio.google.com/apikey (free tier available)
-  - API docs: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/sdks/overview
-- `zai` - Z.ai GLM models
-  - Models: `glm-5.1`
-  - API docs: https://docs.z.ai/guides/develop/python/introduction
-- `anthropic` - Anthropic Claude models
-  - Models: `claude-3-5-sonnet-20241022`
-  - API docs: https://docs.anthropic.com
+| Provider | Key | Models | Notes |
+|---|---|---|---|
+| `gemini` | `QUERY_MCP_API_KEY` | `gemini-2.5-flash`, `gemini-2.0-flash` | Default; free tier via AI Studio |
+| `zai` | `QUERY_MCP_API_KEY` | `glm-5.1` | Z.ai GLM |
+| `anthropic` | `QUERY_MCP_API_KEY` | `claude-3-5-sonnet-20241022` | Anthropic Claude |
 
-## Tools
+---
 
-All tools support the `llm_provider` parameter to override the config default on a per-call basis.
+## MCP Tools
 
-### `ask` — Question to natural language answer (full pipeline)
+All tools accept an optional `llm_provider` parameter to override the configured default per-call.
 
-Ask a question in natural language and get a human-readable answer. Generates SQL, executes it, then summarizes results with the LLM.
+### `ask` — Full Pipeline
+
+Converts a natural language question into SQL, executes it, and returns a human-readable answer.
 
 **Parameters:**
+
 | Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| `user_message` | string | Yes | - | Natural language question |
-| `table_name` | string | Yes | - | PostgreSQL table to query from |
-| `limit` | integer | No | 100 | Max rows to return |
-| `llm_provider` | string | No | config | LLM provider: "gemini", "zai", or "anthropic" |
+|---|---|---|---|---|
+| `user_message` | string | Yes | — | Natural language question |
+| `table_name` | string | Yes | — | Target PostgreSQL table |
+| `limit` | integer | No | 100 | Max rows |
+| `llm_provider` | string | No | config | `"gemini"`, `"zai"`, or `"anthropic"` |
+| `lang` | string | No | auto | Response language |
 
 **Response:**
 ```json
@@ -112,16 +188,11 @@ Ask a question in natural language and get a human-readable answer. Generates SQ
 
 ---
 
-### `generate_sql` — Generate SQL without executing
+### `generate_sql` — SQL Generation Only
 
-Generate a SQL query from natural language without executing it.
+Generates SQL from natural language without executing it.
 
-**Parameters:**
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| `user_message` | string | Yes | - | Natural language query (e.g., "Show me all drugs with price > 100") |
-| `table_name` | string | Yes | - | PostgreSQL table to query from |
-| `llm_provider` | string | No | config | LLM provider: "gemini", "zai", or "anthropic" |
+**Parameters:** `user_message`, `table_name`, `llm_provider`, `lang`
 
 **Response:**
 ```json
@@ -132,272 +203,112 @@ Generate a SQL query from natural language without executing it.
 }
 ```
 
-**Error response:**
+**Clarification response** (when query is ambiguous):
 ```json
 {
   "success": false,
   "sql": null,
-  "error": "Table 'drugs' not found or has no columns"
+  "error": "CLARIFY: Which time period do you want to filter by?"
 }
 ```
 
 ---
 
-### `execute_sql` — Execute SQL and return results
+### `text_to_sql_execute` — Generate and Execute
 
-Execute a raw SQL query and fetch results.
+Generates SQL and runs it in one call. Returns raw results without natural language summarization.
 
-**Parameters:**
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| `sql_query` | string | Yes | - | SQL query to execute |
-| `limit` | integer | No | 100 | Max rows to return |
-| `llm_provider` | string | No | config | LLM provider (unused for execute, kept for consistency) |
+**Parameters:** `user_message`, `table_name`, `limit`, `llm_provider`, `lang`
 
 **Response:**
 ```json
 {
   "success": true,
-  "results": [
-    {"id": 1, "name": "Drug A", "price": 150},
-    {"id": 2, "name": "Drug B", "price": 200}
-  ],
-  "row_count": 2,
-  "error": null
-}
-```
-
-**Error response:**
-```json
-{
-  "success": false,
-  "results": null,
-  "row_count": 0,
-  "error": "Query execution failed: syntax error"
-}
-```
-
----
-
-### `text_to_sql_execute` — Generate SQL and execute (combined)
-
-Convert natural language to SQL AND execute in one call.
-
-**Parameters:**
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| `user_message` | string | Yes | - | Natural language query |
-| `table_name` | string | Yes | - | PostgreSQL table to query |
-| `limit` | integer | No | 100 | Max rows to return |
-| `llm_provider` | string | No | config | LLM provider: "gemini", "zai", or "anthropic" |
-
-**Response:**
-```json
-{
-  "success": true,
-  "sql": "SELECT * FROM drugs WHERE price > 100 LIMIT 100;",
-  "results": [
-    {"id": 1, "name": "Drug A", "price": 150}
-  ],
+  "sql": "SELECT category, COUNT(*) as count FROM items GROUP BY category LIMIT 50;",
+  "results": [{"category": "Electronics", "count": 25}],
   "row_count": 1,
   "error": null
 }
 ```
 
-**Example with explicit provider:**
-```json
-{
-  "user_message": "Show me top 5 expensive drugs",
-  "table_name": "drugs",
-  "limit": 5,
-  "llm_provider": "anthropic"
-}
-```
+---
 
-## Migrations
+### `execute_sql` — Execute Raw SQL
 
-Schema managed by **Alembic**. Single migration file for v1: `alembic/versions/8f9881ec5d77_initial_schema.py`.
+Runs an arbitrary SQL query directly.
 
-```bash
-# Apply migrations
-alembic upgrade head
+**Parameters:**
 
-# Check current revision
-alembic current
+| Name | Type | Required | Default |
+|---|---|---|---|
+| `sql_query` | string | Yes | — |
+| `limit` | integer | No | 100 |
 
-# Roll back one step
-alembic downgrade -1
-```
-
-### Adding a New Migration
-
-```bash
-alembic revision -m "description_of_change"
-# Edit the generated file in alembic/versions/
-alembic upgrade head
-```
-
-## Database Service (`db_service.py`)
-
-Central database layer used by `text_to_sql.py`. Replaces raw `psycopg2` calls with context-managed connections.
-
-```python
-from db_service import DatabaseService
-
-db = DatabaseService.from_config()
-
-# Schema introspection
-db.list_tables()                                    # → ['medicine_bid', 'items', ...]
-db.get_table_schema('medicine_bid')                 # → formatted column info
-
-# Query execution
-db.execute_query("SELECT * FROM medicine_bid")      # → {success, results, row_count, error}
-db.fetch_all('medicine_bid', where="price > %s", params=(100,))
-db.fetch_one('users', where="id = %s", params=(1,))
-db.count('medicine_bid')                            # → 15
-
-# Write operations
-db.execute_write("UPDATE medicine_bid SET stock = %s WHERE id = %s", (0, 1))
-
-# Query history
-db.log_query(user_message="...", table_name="drugs", generated_sql="...", success=True)
-db.get_query_history(limit=50, success_only=True)
-```
-
-## Query History
-
-Every `generate_and_execute()` call is automatically logged to the `query_history` table.
-
-**Tracked fields:** `user_message`, `table_name`, `generated_sql`, `success`, `row_count`, `error`, `llm_provider`, `llm_model`, `execution_time_ms`, `session_id`
-
-```sql
--- Recent failed queries
-SELECT user_message, error, created_at
-FROM query_history WHERE success = FALSE
-ORDER BY created_at DESC LIMIT 10;
-
--- Average execution time by provider
-SELECT llm_provider, AVG(execution_time_ms) as avg_ms
-FROM query_history GROUP BY llm_provider;
-```
-
-## Resources
-
-### `config://database`
-Get current database connection config (password hidden).
-
-### `config://text-to-sql`
-Get text-to-sql configuration (API key hidden).
-
-## Prompts
-
-### `sql_query_help`
-Get help for different SQL query types:
-- `select` - Basic SELECT queries
-- `filter` - WHERE conditions
-- `aggregate` - GROUP BY and aggregations
-
-## Examples
-
-### Example 1: Generate SQL (Gemini)
-```json
-{
-  "user_message": "Find all items with status = 'active'",
-  "table_name": "items",
-  "llm_provider": "gemini"
-}
-```
-
-Response:
+**Response:**
 ```json
 {
   "success": true,
-  "sql": "SELECT * FROM items WHERE status = 'active' LIMIT 100;",
+  "results": [{"id": 1, "name": "Drug A", "price": 150}],
+  "row_count": 1,
   "error": null
 }
 ```
 
-### Example 2: Generate + Execute (Anthropic Claude)
-```json
-{
-  "user_message": "Count items by category",
-  "table_name": "items",
-  "limit": 50,
-  "llm_provider": "anthropic"
-}
-```
+---
 
-Response:
-```json
-{
-  "success": true,
-  "sql": "SELECT category, COUNT(*) as count FROM items GROUP BY category LIMIT 50;",
-  "results": [
-    {"category": "Electronics", "count": 25},
-    {"category": "Books", "count": 18}
-  ],
-  "row_count": 2,
-  "error": null
-}
-```
+### MCP Resources
 
-### Example 3: Execute Raw SQL
-```json
-{
-  "sql_query": "SELECT name, price FROM drugs WHERE price > 100 ORDER BY price DESC;",
-  "limit": 10
-}
-```
+| Resource | Description |
+|---|---|
+| `config://database` | Current DB config (password hidden) |
+| `config://text-to-sql` | LLM config (API key hidden) |
 
-## REST API (HTTP Mode)
+### MCP Prompts
 
-Start the server in HTTP mode for curl/REST access:
+`sql_query_help(query_type)` — Returns SQL help for `"select"`, `"filter"`, or `"aggregate"`.
+
+---
+
+## REST API
+
+Start the HTTP server:
 
 ```bash
-# Start HTTP server (default port 8001)
-python src/server.py http
-
-# Custom port
-python src/server.py http 9000
+python src/server.py http         # port 8001 (default)
+python src/server.py http 9000    # custom port
 ```
 
 ### Endpoints
 
-See [API_ENDPOINTS.md](docs/API_ENDPOINTS.md) for complete endpoint documentation.
-
-Quick reference:
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/ask` | Full pipeline: question → SQL → execute → natural language answer |
-| `POST` | `/api/query` | Question → SQL → execute → raw results |
-| `POST` | `/api/sql` | Question → SQL only (no execution) |
-| `POST` | `/api/execute` | Run raw SQL query |
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/ask` | Natural language → SQL → execute → text answer |
+| `POST` | `/api/query` | Natural language → SQL → execute → raw results |
+| `POST` | `/api/sql` | Natural language → SQL only |
+| `POST` | `/api/execute` | Execute raw SQL |
 | `GET` | `/api/health` | Health check |
-| `GET` | `/api/tables` | List all tables with metadata (schema inspection) |
-| `GET` | `/api/tables/{table_id}` | Get table details |
-| `GET` | `/api/tables/{table_id}/schema` | Get table column definitions |
-| `GET` | `/api/tables/{table_id}/data` | Get paginated table data with sorting |
-| `GET` | `/api/tables/{table_id}/stats` | Get table statistics (row count, aggregates, distributions) |
-| `GET` | `/api/columns/{table_ref}` | Get column names for autocomplete |
-| `GET` | `/api/query/history` | Get query execution history |
+| `GET` | `/api/tables` | List all tables with metadata |
+| `GET` | `/api/tables/{table_id}` | Table details |
+| `GET` | `/api/tables/{table_id}/schema` | Column definitions |
+| `GET` | `/api/tables/{table_id}/data` | Paginated data with sorting |
+| `GET` | `/api/tables/{table_id}/stats` | Row count, aggregates, distributions |
+| `GET` | `/api/columns/{table_ref}` | Column names (for autocomplete) |
+| `GET` | `/api/query/history` | Query execution history |
 
 ### curl Examples
 
-Quick examples (see [API_ENDPOINTS.md](docs/API_ENDPOINTS.md) for complete reference):
-
 ```bash
-# Ask — get a text answer
+# Get a natural language answer
 curl -s -X POST http://localhost:8001/api/ask \
   -H "Content-Type: application/json" \
   -d '{"user_message": "What are the top 3 most expensive drugs?", "table_name": "drugs"}'
 
-# Query — raw data
+# Raw query results
 curl -s -X POST http://localhost:8001/api/query \
   -H "Content-Type: application/json" \
   -d '{"user_message": "Count drugs by category", "table_name": "drugs"}'
 
-# Generate SQL only (no execution)
+# SQL only — no execution
 curl -s -X POST http://localhost:8001/api/sql \
   -H "Content-Type: application/json" \
   -d '{"user_message": "Find inactive drugs", "table_name": "drugs"}'
@@ -407,37 +318,144 @@ curl -s -X POST http://localhost:8001/api/execute \
   -H "Content-Type: application/json" \
   -d '{"sql_query": "SELECT name, price FROM drugs WHERE price > 30", "limit": 5}'
 
-# List tables (schema inspection)
-curl -s http://localhost:8001/api/tables
-
-# Get table data with pagination and sorting
+# Paginated table data sorted by price descending
 curl -s "http://localhost:8001/api/tables/src_abc12345/data?limit=10&offset=0&sort=price&order=desc"
 
-# Get table statistics (row count, numeric summaries, distributions)
+# Table statistics
 curl -s http://localhost:8001/api/tables/src_abc12345/stats
 
-# Get column names for autocomplete
-curl -s http://localhost:8001/api/columns/drugs
-
-# View query execution history
-curl -s http://localhost:8001/api/query/history?limit=50
+# Query history
+curl -s "http://localhost:8001/api/query/history?limit=50"
 ```
+
+---
+
+## Database Service
+
+`db_service.py` is the central data access layer used by both the MCP server and the text-to-SQL engine. All queries are parameterized to prevent SQL injection.
+
+```python
+from db_service import DatabaseService
+
+db = DatabaseService.from_config()
+
+# Schema inspection
+db.list_tables()                                       # → ['drugs', 'items', ...]
+db.get_table_schema('drugs')                           # → formatted column info string
+db.get_table_columns('drugs')                          # → [{'name': ..., 'type': ...}, ...]
+
+# Reads
+db.execute_query("SELECT * FROM drugs WHERE price > 50")  # → {success, results, row_count, error}
+db.fetch_all('drugs', where="price > %s", params=(50,))
+db.fetch_one('users', where="id = %s", params=(1,))
+db.count('drugs')                                      # → 42
+
+# Paginated data with sorting
+db.get_table_data('drugs', limit=20, offset=0, sort='price', order='desc')
+
+# Table statistics (row count, numeric summaries, value distributions)
+db.get_table_stats('drugs')
+
+# Writes
+db.execute_write("UPDATE drugs SET stock = %s WHERE id = %s", (0, 1))
+
+# Query audit
+db.log_query(user_message="...", table_name="drugs", generated_sql="...", success=True)
+db.get_query_history(limit=50, success_only=True)
+```
+
+All database connections use context managers — connections are always closed even on error.
+
+---
+
+## Query History
+
+Every `generate_and_execute()` call is automatically logged to the `query_history` table.
+
+**Tracked fields:**
+
+| Field | Description |
+|---|---|
+| `session_id` | Session identifier |
+| `user_message` | Original natural language question |
+| `table_name` | Target table |
+| `generated_sql` | The SQL that was generated |
+| `success` | Whether the query succeeded |
+| `row_count` | Number of rows returned |
+| `error` | Error message if failed |
+| `llm_provider` | Which LLM generated the SQL |
+| `llm_model` | Specific model used |
+| `execution_time_ms` | End-to-end time in milliseconds |
+| `created_at` | Timestamp |
+
+**Example queries:**
+
+```sql
+-- Recent failures
+SELECT user_message, error, created_at
+FROM query_history
+WHERE success = FALSE
+ORDER BY created_at DESC LIMIT 10;
+
+-- Average execution time per provider
+SELECT llm_provider, AVG(execution_time_ms) AS avg_ms
+FROM query_history
+GROUP BY llm_provider;
+```
+
+---
+
+## Migrations
+
+Schema is managed by **Alembic**. The initial migration (`8f9881ec5d77_initial_schema.py`) creates the `query_history` table.
+
+```bash
+# Apply all pending migrations
+alembic upgrade head
+
+# Check current revision
+alembic current
+
+# Roll back one step
+alembic downgrade -1
+
+# Create a new migration
+alembic revision -m "add_new_column"
+# Edit the generated file in alembic/versions/, then:
+alembic upgrade head
+```
+
+---
+
+## Deployment
+
+### Local Development
+
+```bash
+python src/server.py           # MCP stdio mode
+python src/server.py http      # HTTP mode on port 8001
+```
+
+### Docker
+
+```bash
+docker-compose up -d           # Starts Query MCP + PostgreSQL
+```
+
+See [docs/DOCKER_SETUP.md](docs/DOCKER_SETUP.md) for configuration details.
+
+### Production (Cloud Run)
+
+Query MCP is deployed as part of the `med-tech-workload` stack. Migrations run automatically on every deployment.
+
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full production deployment instructions.
+
+---
 
 ## Error Handling
 
-All tools return consistent error format with `success: false`.
+All tools and endpoints return a consistent JSON structure:
 
-### Common Errors & Fixes
-
-| Error | Cause | Fix |
-|-------|-------|-----|
-| `LLM API key not configured` | Missing API key | Set `QUERY_MCP_API_KEY` env var or config.json |
-| `Database connection failed` | Invalid host/port/credentials | Check config, verify PostgreSQL is running |
-| `Table 'xyz' not found or has no columns` | Table doesn't exist | Use correct table name (case-sensitive in PostgreSQL) |
-| `Query execution failed: syntax error` | Invalid SQL | Check generated SQL or provide valid SQL |
-| `Unsupported LLM provider: xyz` | Unknown LLM provider | Use "gemini", "zai", or "anthropic" |
-
-### Error Response Format
 ```json
 {
   "success": false,
@@ -448,75 +466,47 @@ All tools return consistent error format with `success: false`.
 }
 ```
 
-## Integration with Claude
+### Common Errors
 
-### Register with Claude Code
-1. Open Claude Code settings
-2. Go to "MCP Servers"
-3. Add new server:
-   - **Name**: Query MCP
-   - **Command**: `python`
-   - **Args**: `/home/htnguyen/Space/query-mcp/server.py`
-   - **Env**: `QUERY_MCP_API_KEY=your-api-key`
-4. Click "Connect"
+| Error | Cause | Fix |
+|---|---|---|
+| `LLM API key not configured` | Missing API key | Set `QUERY_MCP_API_KEY` |
+| `Database connection failed` | Bad host/port/credentials | Check `~/.query-mcp/config.json`, verify PostgreSQL is running |
+| `Table 'xyz' not found or has no columns` | Table does not exist | Use the correct table name (case-sensitive) |
+| `Query execution failed: syntax error` | Bad SQL | Review generated SQL or provide valid SQL directly |
+| `Unsupported LLM provider: xyz` | Unknown provider name | Use `"gemini"`, `"zai"`, or `"anthropic"` |
 
-### Usage in Claude
-Once registered, you can ask Claude:
-- "Query the drugs table and show me the top 10 most expensive items"
-- "Count how many items are in each category"
-- "Find all drugs with a price between $50-$100"
-- "Show me recent orders with total > $1000"
+---
 
-Claude will:
-1. Use the appropriate LLM provider
-2. Generate SQL from your natural language request
-3. Execute the query
-4. Present results in a readable format
+## Troubleshooting
 
-## Resources
-
-### MCP Resources
-- `config://database` - Get current database config (password hidden)
-- `config://text-to-sql` - Get LLM config (API key hidden)
-
-### MCP Prompts
-- `sql_query_help(query_type)` - Get SQL query help
-  - Types: "select", "filter", "aggregate"
-
-## Architecture
-
-```
-User Request (Natural Language or HTTP)
-    ↓
-MCP Server (server.py)
-    ├─ MCP Stdio Protocol (for Claude integration)
-    └─ HTTP REST API (for direct HTTP access)
-         ├─ Text-to-SQL endpoints (/api/ask, /api/query, /api/sql)
-         └─ Schema inspection endpoints (/api/tables, /api/columns, etc)
-    ↓
-TextToSQL Engine (text_to_sql.py)
-    ├─ LLM Provider (Gemini, Z.ai, or Anthropic)
-    └─ DatabaseService (db_service.py)
-        ├─ Schema Discovery
-        ├─ Query Execution
-        └─ Query History Logging
-    ↓
-PostgreSQL Database (local, external, or med-tech-workload deployment)
-    ↓
-Response (JSON)
+**Server won't start:**
+```bash
+python --version                          # Need 3.8+
+pip list | grep -E "fastmcp|psycopg2"    # Check deps
+python -u src/server.py                   # Verbose output
 ```
 
-## Deployment
+**API key errors:**
+```bash
+echo $QUERY_MCP_API_KEY
+cat ~/.query-mcp/config.json
+```
 
-- **Local Development**: Run `python src/server.py` with local postgres
-- **Docker (Dev)**: See [DOCKER_SETUP.md](docs/DOCKER_SETUP.md) - docker-compose for Query MCP only (postgres managed separately)
-- **Production**: Query MCP deployed as part of med-tech-workload stack with shared postgres instance
+**Database connection errors:**
+```bash
+psql -h localhost -U postgres -d postgres -c "SELECT 1;"
+cat ~/.query-mcp/config.json | grep -A 5 database
+```
 
-**File Structure:**
+---
+
+## Project Structure
+
 ```
 query-mcp/
 ├── src/
-│   ├── server.py          # MCP server entry point
+│   ├── server.py          # MCP server + HTTP REST entry point
 │   ├── text_to_sql.py     # Core TextToSQL engine
 │   ├── db_service.py      # Database service layer
 │   ├── workflow.py        # Download & load workflow
@@ -524,45 +514,14 @@ query-mcp/
 ├── alembic/
 │   ├── env.py             # Alembic environment config
 │   └── versions/
-│       └── 8f9881ec5d77_initial_schema.py  # v1 schema
-├── alembic.ini            # Alembic config
-├── docker/                # Docker configuration
-├── docs/                  # Documentation
+│       └── 8f9881ec5d77_initial_schema.py
+├── alembic.ini
+├── docker/
+├── docs/
+│   ├── API_ENDPOINTS.md   # Complete REST API reference
+│   ├── ARCHITECTURE.md    # System design
+│   ├── DEPLOYMENT.md      # Production deployment
+│   └── DOCKER_SETUP.md    # Docker configuration
 ├── requirements.txt
 └── README.md
-```
-
-## Troubleshooting
-
-### Server won't start
-```bash
-# Check Python version (need 3.8+)
-python --version
-
-# Check dependencies installed
-pip list | grep -E "zai|anthropic|psycopg2|fastmcp"
-
-# Run with verbose output
-python -u server.py
-```
-
-### API key errors
-```bash
-# Verify env var is set
-echo $QUERY_MCP_API_KEY
-
-# Check config file
-cat ~/.query-mcp/config.json
-
-# Test API key with a simple request
-python -c "from zai import ZaiClient; ZaiClient(api_key='your-key')"
-```
-
-### Database connection errors
-```bash
-# Test PostgreSQL connection
-psql -h localhost -U postgres -d postgres -c "SELECT 1;"
-
-# Check config
-cat ~/.query-mcp/config.json | grep -A 5 database
 ```

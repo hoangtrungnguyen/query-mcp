@@ -16,6 +16,10 @@ from psycopg2 import sql as pg_sql
 
 CONFIG_FILE = Path.home() / ".query-mcp" / "config.json"
 
+SYSTEM_TABLES = frozenset({
+    "query_history", "query_sessions", "import_log", "alembic_version",
+})
+
 DEFAULT_DB = {
     "host": "localhost",
     "port": 5432,
@@ -127,6 +131,15 @@ class DatabaseService:
                 """
             )
             return [row[0] for row in cur.fetchall()]
+
+    def list_app_tables(self) -> list[str]:
+        """Return user tables excluding system/internal tables."""
+        return [t for t in self.list_tables() if t not in SYSTEM_TABLES]
+
+    def get_all_app_schemas(self) -> str:
+        """Return combined schema text for all application tables."""
+        schemas = [self.get_table_schema(t) for t in self.list_app_tables()]
+        return "\n\n".join(schemas)
 
     def get_table_columns(self, table_name: str) -> list[dict]:
         """Return structured column list for a table."""
@@ -312,6 +325,76 @@ class DatabaseService:
         with self.cursor() as cur:
             cur.execute(sql, params)
             return cur.fetchone()[0]
+
+    # ------------------------------------------------------------------
+    # Conversation sessions
+    # ------------------------------------------------------------------
+
+    def get_session(self, session_id: str) -> Optional[dict]:
+        """Fetch a session by session_id, or None if not found."""
+        result = self.execute_query(
+            "SELECT * FROM query_sessions WHERE session_id = %s",
+            (session_id,),
+            limit=1,
+        )
+        if result["success"] and result["results"]:
+            return result["results"][0]
+        return None
+
+    def save_session_message(
+        self,
+        session_id: str,
+        user_message: str,
+        table_name: Optional[str] = None,
+        generated_sql: Optional[str] = None,
+        answer: Optional[str] = None,
+        row_count: int = 0,
+        success: bool = True,
+        error: Optional[str] = None,
+    ) -> dict:
+        """Append a user+assistant turn to the session's messages JSONB array.
+
+        Creates the session row on first call (upsert).
+        Returns the updated session dict.
+        """
+        import datetime
+        ts = datetime.datetime.utcnow().isoformat()
+
+        user_entry = {"role": "user", "content": user_message, "timestamp": ts}
+        assistant_entry = {
+            "role": "assistant",
+            "sql": generated_sql,
+            "answer": answer,
+            "row_count": row_count,
+            "success": success,
+            "error": error,
+            "timestamp": ts,
+        }
+        new_messages = json.dumps([user_entry, assistant_entry])
+
+        with self.cursor(dict_cursor=True) as cur:
+            # Upsert: create if missing, append messages if exists
+            cur.execute(
+                """
+                INSERT INTO query_sessions (session_id, title, table_name, messages, updated_at)
+                VALUES (%s, %s, %s, %s::jsonb, CURRENT_TIMESTAMP)
+                ON CONFLICT (session_id)
+                DO UPDATE SET
+                    messages   = query_sessions.messages || EXCLUDED.messages,
+                    table_name = COALESCE(EXCLUDED.table_name, query_sessions.table_name),
+                    updated_at = CURRENT_TIMESTAMP
+                RETURNING *
+                """,
+                (session_id, user_message[:100], table_name, new_messages),
+            )
+            return dict(cur.fetchone())
+
+    def get_session_messages(self, session_id: str) -> list[dict]:
+        """Return the messages array for a session, or empty list."""
+        session = self.get_session(session_id)
+        if not session:
+            return []
+        return session.get("messages") or []
 
     # ------------------------------------------------------------------
     # Query history

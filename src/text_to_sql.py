@@ -105,6 +105,48 @@ class TextToSQL:
             return response.content[0].text.strip()
 
     # ------------------------------------------------------------------
+    # Conversation context
+    # ------------------------------------------------------------------
+
+    def _get_conversation_context(self, session_id: Optional[str], limit: int = 20) -> str:
+        """
+        Build conversation context from the session's messages JSONB array.
+
+        Reads from query_sessions.messages (already in chronological order).
+        Only includes the last `limit` messages to keep prompt size bounded.
+        """
+        if not session_id:
+            return ""
+        try:
+            messages = self.db.get_session_messages(session_id)
+        except Exception:
+            return ""
+        if not messages:
+            return ""
+
+        # Keep only the last N messages
+        messages = messages[-limit:]
+
+        lines = []
+        for msg in messages:
+            role = msg.get("role", "")
+            if role == "user":
+                lines.append(f"User: {msg.get('content', '')}")
+            elif role == "assistant":
+                sql = msg.get("sql")
+                answer = msg.get("answer")
+                error = msg.get("error")
+                if sql:
+                    lines.append(f"SQL: {sql}")
+                    lines.append(f"Rows returned: {msg.get('row_count', 0)}")
+                if answer:
+                    lines.append(f"Answer: {answer}")
+                if error:
+                    lines.append(f"Error: {error}")
+
+        return "Previous conversation in this session:\n" + "\n".join(lines)
+
+    # ------------------------------------------------------------------
     # Core methods
     # ------------------------------------------------------------------
 
@@ -112,36 +154,58 @@ class TextToSQL:
         """Get schema information for a table via DatabaseService."""
         return self.db.get_table_schema(table_name)
 
+    def _resolve_schemas(self, table_name: Optional[str]) -> str:
+        """Return schema text: single table if specified, all app tables if None."""
+        if table_name:
+            return self._get_table_schema(table_name)
+        return self.db.get_all_app_schemas()
+
     def _lang_instruction(self, lang: Optional[str]) -> str:
         """Return a language instruction string for LLM prompts."""
         if lang:
             return f"You MUST reply in {lang}."
         return "Reply in the same language as the user's query."
 
-    def generate_sql(self, user_message: str, table_name: str, lang: str = None) -> Dict[str, Any]:
+    def generate_sql(self, user_message: str, table_name: str = None, lang: str = None, session_id: str = None) -> Dict[str, Any]:
         """
         Generate SQL query from natural language
 
         Args:
             user_message: Natural language query from user
-            table_name: PostgreSQL table to query from
+            table_name: PostgreSQL table to query from (auto-detects if None)
             lang: Response language (e.g., "vi", "en", "Vietnamese"). Auto-detects if None.
+            session_id: Optional session id for conversation context
 
         Returns:
             Dict with 'success', 'sql', 'error', 'needs_clarification', 'clarification' fields
         """
         try:
-            schema = self._get_table_schema(table_name)
+            schema = self._resolve_schemas(table_name)
             lang_inst = self._lang_instruction(lang)
+            conv_context = self._get_conversation_context(session_id)
+
+            conv_block = ""
+            if conv_context:
+                conv_block = f"""
+{conv_context}
+
+Use the conversation above to resolve references like "those", "the same", "more", "also", etc.
+"""
+
+            table_rule = (
+                "- Only query the specified table"
+                if table_name
+                else "- Select the appropriate table(s) based on the user's question. You may JOIN tables when needed."
+            )
 
             system_prompt = f"""You are a SQL expert. Convert natural language queries to PostgreSQL SQL.
 You understand queries in multiple languages including English and Vietnamese.
 
 {schema}
-
+{conv_block}
 Rules:
 - Generate valid PostgreSQL syntax
-- Only query the specified table
+{table_rule}
 - Use the exact column names from the schema
 - Do not modify data (SELECT only)
 - Include LIMIT clause if appropriate
@@ -198,6 +262,7 @@ Examples of when to ask for clarification:
         results: list,
         row_count: int,
         lang: str = None,
+        session_id: str = None,
     ) -> str:
         """
         Ask LLM to interpret query results into a natural language answer.
@@ -207,15 +272,26 @@ Examples of when to ask for clarification:
             sql: The SQL that was executed
             results: List of result dicts from the query
             row_count: Number of rows returned
+            session_id: Optional session id for conversation context
 
         Returns:
             Natural language summary string
         """
         lang_inst = self._lang_instruction(lang)
+        conv_context = self._get_conversation_context(session_id)
+
+        conv_block = ""
+        if conv_context:
+            conv_block = f"""
+{conv_context}
+
+Use the conversation history above to provide contextually relevant answers.
+"""
+
         system_prompt = f"""You are a helpful data analyst. The user asked a question about their database.
 A SQL query was generated and executed. Now summarize the results in clear, natural language.
 {lang_inst}
-
+{conv_block}
 Rules:
 - Answer the user's original question directly
 - Include key numbers, names, and insights from the data
@@ -251,7 +327,7 @@ Results ({row_count} rows):
     def generate_and_execute(
         self,
         user_message: str,
-        table_name: str,
+        table_name: str = None,
         limit: int = 100,
         session_id: str = None,
         lang: str = None,
@@ -261,7 +337,7 @@ Results ({row_count} rows):
 
         Args:
             user_message: Natural language query
-            table_name: PostgreSQL table to query
+            table_name: PostgreSQL table to query (auto-detects if None)
             limit: Max rows to return
             session_id: Optional session id for query history tracking
             lang: Response language (e.g., "vi", "en"). Auto-detects if None.
@@ -271,8 +347,8 @@ Results ({row_count} rows):
         """
         t0 = time.monotonic()
 
-        # Generate SQL
-        gen_result = self.generate_sql(user_message, table_name, lang=lang)
+        # Generate SQL (with conversation context)
+        gen_result = self.generate_sql(user_message, table_name, lang=lang, session_id=session_id)
         if gen_result.get("needs_clarification"):
             self._log(user_message, table_name, None, False, 0,
                       "needs_clarification", session_id, t0)
@@ -318,7 +394,7 @@ Results ({row_count} rows):
     def ask(
         self,
         user_message: str,
-        table_name: str,
+        table_name: str = None,
         limit: int = 100,
         session_id: str = None,
         lang: str = None,
@@ -328,7 +404,7 @@ Results ({row_count} rows):
 
         Args:
             user_message: Natural language question
-            table_name: PostgreSQL table to query
+            table_name: PostgreSQL table to query (auto-detects if None)
             limit: Max rows to return
             session_id: Optional session id for history tracking
             lang: Response language (e.g., "vi", "en", "Vietnamese"). Auto-detects if None.
@@ -339,8 +415,8 @@ Results ({row_count} rows):
         """
         t0 = time.monotonic()
 
-        # Step 1: Generate SQL
-        gen_result = self.generate_sql(user_message, table_name, lang=lang)
+        # Step 1: Generate SQL (with conversation context)
+        gen_result = self.generate_sql(user_message, table_name, lang=lang, session_id=session_id)
         if gen_result.get("needs_clarification"):
             self._log(user_message, table_name, None, False, 0,
                       "needs_clarification", session_id, t0)
@@ -384,7 +460,7 @@ Results ({row_count} rows):
                 "error": exec_result["error"],
             }
 
-        # Step 3: Summarize with LLM
+        # Step 3: Summarize with LLM (with conversation context)
         try:
             answer = self.summarize_results(
                 user_message,
@@ -392,12 +468,14 @@ Results ({row_count} rows):
                 exec_result["results"],
                 exec_result["row_count"],
                 lang=lang,
+                session_id=session_id,
             )
         except Exception as e:
             answer = None
 
         self._log(user_message, table_name, gen_result["sql"],
-                  True, exec_result["row_count"], None, session_id, t0)
+                  True, exec_result["row_count"], None, session_id, t0,
+                  answer=answer)
 
         return {
             "success": True,
@@ -411,8 +489,8 @@ Results ({row_count} rows):
         }
 
     def _log(self, user_message, table_name, sql, success, row_count,
-             error, session_id, t0):
-        """Best-effort write to query_history."""
+             error, session_id, t0, answer=None):
+        """Best-effort write to query_history and query_sessions."""
         try:
             elapsed_ms = int((time.monotonic() - t0) * 1000)
             self.db.log_query(
@@ -428,4 +506,19 @@ Results ({row_count} rows):
                 session_id=session_id,
             )
         except Exception:
-            pass  # never fail the main request for logging
+            pass
+        # Save conversation turn to query_sessions
+        if session_id:
+            try:
+                self.db.save_session_message(
+                    session_id=session_id,
+                    user_message=user_message,
+                    table_name=table_name,
+                    generated_sql=sql,
+                    answer=answer,
+                    row_count=row_count,
+                    success=success,
+                    error=error,
+                )
+            except Exception:
+                pass  # never fail the main request for logging

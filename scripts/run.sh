@@ -1,22 +1,52 @@
 #!/bin/bash
 set -e
 
-echo "🚀 Starting Query MCP Server..."
+echo "🎯 Query MCP - Setup, Migrate & Run"
+echo ""
 
 cd "$(dirname "$0")/.."
 
-# Check if venv exists
-if [ ! -d "venv" ]; then
-    echo "❌ Virtual environment not found. Run setup.sh first."
-    exit 1
+# ── Load .env ────────────────────────────────────────────────────
+if [ -f .env ]; then
+    export $(grep -v '^#' .env | xargs)
 fi
 
-# Activate venv
+# ── Step 1: Virtual environment & dependencies ───────────────────
+if [ ! -d "venv" ]; then
+    echo "📦 Creating virtual environment..."
+    python3 -m venv venv
+fi
+
 source venv/bin/activate
 
-# Get port from argument or use default
+echo "📥 Installing dependencies..."
+pip install -q -r requirements.txt
+
+# ── Step 2: Database migrations ──────────────────────────────────
+echo ""
+echo "🗄️  Running database migrations..."
+
+echo "📡 Checking database connection..."
+if ! PGPASSWORD=postgres psql -h localhost -U postgres -d postgres -c "SELECT 1" &>/dev/null; then
+    echo "❌ Cannot connect to PostgreSQL at localhost:5432"
+    echo "   Make sure PostgreSQL is running with:"
+    echo "   - Host: localhost"
+    echo "   - Port: 5432"
+    echo "   - User: postgres"
+    echo "   - Password: postgres"
+    exit 1
+fi
+echo "✓ Database connection OK"
+
+echo "🚀 Upgrading schema..."
+alembic upgrade head
+
+echo "✅ Migrations complete!"
+
+# ── Step 3: Start server ─────────────────────────────────────────
 PORT=${1:-8001}
 
+echo ""
 echo "🌐 Server starting on http://localhost:$PORT"
 echo ""
 echo "Available endpoints:"
@@ -30,10 +60,9 @@ echo ""
 echo "Press Ctrl+C to stop"
 echo ""
 
-# Set API key if provided
 if [ -z "$QUERY_MCP_API_KEY" ]; then
     echo "⚠️  Warning: QUERY_MCP_API_KEY not set"
-    echo "   Set it with: export QUERY_MCP_API_KEY='your-key'"
+    echo "   Set it in .env or: export QUERY_MCP_API_KEY='your-key'"
 fi
 
 python src/server.py http $PORT

@@ -1,26 +1,30 @@
-# Query MCP - Quick Start Guide
+# Quick Start — 5 Minutes to Your First Insight
 
-Get up and running in 5 minutes.
+> **For your IT or development team.** Once set up, business users can ask questions without any technical steps.
+
+---
 
 ## Prerequisites
 
-- Docker & Docker Compose installed
-- Z.ai API key (or Anthropic)
+- Docker & Docker Compose
+- An AI API key — Google Gemini is recommended ([free tier available at Google AI Studio](https://aistudio.google.com))
 
-## 1. Set API Key
+---
+
+## 1. Set Your API Key
 
 ```bash
-export QUERY_MCP_API_KEY="d0662f7ffca1436ca9925c940fedd661.mJYqCfIg6KhS4OsG"
+export QUERY_MCP_API_KEY="your-gemini-api-key"
 ```
 
-## 2. Start Services
+## 2. Start the Service
 
 ```bash
 cd /home/htnguyen/Space/query-mcp
 docker-compose up -d
 ```
 
-## 3. Verify Running
+## 3. Verify It's Running
 
 ```bash
 docker-compose ps
@@ -33,104 +37,84 @@ query-mcp-postgres       running (healthy)
 query-mcp-server         running
 ```
 
-## 4. Test Database
-
-```bash
-docker exec -it query-mcp-postgres psql -U postgres -d testdb -c "SELECT COUNT(*) FROM drugs;"
-```
-
-Expected output:
-```
- count 
--------
-    15
-(1 row)
-```
-
 ---
 
-## Access Points
+## 4. Connect to Claude
 
-| Service | Address | Port | Use |
-|---------|---------|------|-----|
-| PostgreSQL | localhost | 5440 | Query database |
-| Query MCP | (internal) | - | MCP protocol |
-
----
-
-## Common Commands
-
-### Query Database
-
-```bash
-# Interactive shell
-docker exec -it query-mcp-postgres psql -U postgres -d testdb
-
-# Run query
-docker exec -it query-mcp-postgres psql -U postgres -d testdb -c "SELECT * FROM drugs LIMIT 5;"
-```
-
-### View Logs
-
-```bash
-# All services
-docker-compose logs -f
-
-# Specific service
-docker-compose logs -f postgres
-docker-compose logs -f query-mcp
-```
-
-### Stop Services
-
-```bash
-docker-compose down
-```
-
-### Restart Services
-
-```bash
-docker-compose restart
-```
-
----
-
-## Add to Claude Code
-
-1. Settings → MCP Servers
-2. Add new:
+**In Claude Code:**
+1. Settings → MCP Servers → Add new server
+2. Set:
    - **Name:** Query MCP
    - **Command:** `docker`
    - **Args:** `exec -i query-mcp-server python server.py`
 3. Click Connect
 
-## Use in Claude
-
-Ask Claude:
-- "Query the drugs table and show me the top 10 most expensive items"
-- "Count how many drugs are in each category"
-- "Find all active items ordered by price"
+**In Claude Desktop:**  
+See [docs/INTEGRATION.md](docs/INTEGRATION.md) for the config file location.
 
 ---
 
-## Sample Queries
+## 5. Start Asking Questions
 
-```sql
--- List all drugs
-SELECT * FROM drugs;
+Once connected, Claude can answer business questions directly from your data:
 
--- Find expensive drugs
-SELECT name, price FROM drugs WHERE price > 20 ORDER BY price DESC;
+- *"What are our top 5 products by revenue?"*
+- *"How many customers placed orders this month?"*
+- *"Which items are running low on stock?"*
+- *"Show me all orders over $200 that are still pending"*
 
--- Count by category
-SELECT category, COUNT(*) FROM drugs GROUP BY category;
+No SQL, no coding — just ask.
 
--- View
-SELECT * FROM active_drugs;
+---
 
--- Orders with totals
-SELECT u.name, COUNT(o.id), SUM(o.total) FROM users u LEFT JOIN orders o ON u.id = o.user_id GROUP BY u.name;
+## What's Included in the Demo Database
+
+The Docker setup includes a sample database with realistic business data so you can explore right away:
+
+| Data | Records | What you can explore |
+|------|---------|----------------------|
+| Products | 15 | Pricing, categories, stock levels |
+| Items | 10 | Inventory by category |
+| Customers | 10 | Active/inactive, spending history |
+| Orders | 10 | Status, totals, customer linkage |
+
+**Try asking:**
+- "Which products have the highest price?"
+- "How much has each customer spent in total?"
+- "Show me all completed orders sorted by value"
+
+---
+
+## Access Details
+
+| Service | Address | Use |
+|---------|---------|-----|
+| PostgreSQL | localhost:5440 | Direct database access (for developers) |
+| Query MCP | Connected via Claude | Natural language queries (for everyone) |
+
+---
+
+## Common Operations
+
+### Stop the service
+```bash
+docker-compose down
 ```
+
+### Restart the service
+```bash
+docker-compose restart
+```
+
+### View logs
+```bash
+docker-compose logs -f
+```
+
+### Connect your own database
+
+Edit `docker-compose.yml` with your PostgreSQL connection details, then restart.  
+See [docs/DOCKER_SETUP.md](docs/DOCKER_SETUP.md) for all configuration options.
 
 ---
 
@@ -138,56 +122,29 @@ SELECT u.name, COUNT(o.id), SUM(o.total) FROM users u LEFT JOIN orders o ON u.id
 
 **Services won't start:**
 ```bash
-# Check logs
-docker-compose logs
-
-# Rebuild
-docker-compose down -v
+docker-compose logs          # Check for errors
+docker-compose down -v       # Clean slate
 docker-compose build --no-cache
 docker-compose up -d
 ```
 
-**Can't connect to PostgreSQL:**
+**Can't connect to the database:**
 ```bash
-# Verify it's running
-docker-compose ps
-
-# Check port
-lsof -i :5440
+docker-compose ps            # Is it running?
+lsof -i :5440                # Is the port in use?
 ```
 
-**API key not working:**
+**API key errors:**
 ```bash
-# Verify env var
-echo $QUERY_MCP_API_KEY
-
-# Restart services
-docker-compose restart
+echo $QUERY_MCP_API_KEY      # Is it set?
+docker-compose restart       # Apply the env var
 ```
 
 ---
 
 ## Next Steps
 
-- Read [README.md](README.md) for full features
-- Read [DOCKER_SETUP.md](DOCKER_SETUP.md) for advanced Docker setup
-- See [API_REFERENCE.md](API_REFERENCE.md) for all endpoints
-- See [ARCHITECTURE.md](ARCHITECTURE.md) for system design
-
----
-
-## Configuration
-
-Current setup:
-- **PostgreSQL:** `localhost:5440`
-- **Database:** `testdb`
-- **User:** `postgres`
-- **Password:** `postgres`
-- **LLM Provider:** Z.ai (default)
-- **LLM Model:** GLM-5.1
-
-To change: Edit `docker-compose.yml` and rebuild.
-
----
-
-That's it! You're ready to use Query MCP with PostgreSQL.
+- **Connect your real database** — see [docs/DOCKER_SETUP.md](docs/DOCKER_SETUP.md)
+- **Share with your team** — see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for production deployment
+- **See what's possible** — browse [docs/EXAMPLES.md](docs/EXAMPLES.md) for question ideas
+- **Common questions** — [docs/FAQ.md](docs/FAQ.md)

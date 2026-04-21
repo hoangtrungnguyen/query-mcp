@@ -1,393 +1,156 @@
-# Query MCP - Complete Overview
+# Query MCP — Overview
 
-Comprehensive overview of the Query MCP text-to-SQL system.
+## The Problem It Solves
 
-## What is Query MCP?
+Business leaders and operators need answers from their data every day. But getting those answers typically means:
 
-Query MCP converts natural language questions into PostgreSQL SQL queries using AI (Z.ai or Anthropic Claude).
+- Filing a request with a developer or analyst
+- Waiting hours or days for a report
+- Getting a result that may not quite match what you needed
+- Repeating the cycle when you have a follow-up question
 
-**Simple workflow:**
-```
-User: "Show me expensive drugs"
-  ↓
-Query MCP + LLM
-  ↓
-SQL: "SELECT * FROM drugs WHERE price > 100"
-  ↓
-PostgreSQL
-  ↓
-Results: [{"id": 1, "name": "Drug A", "price": 150}, ...]
-```
-
-## Key Features
-
-✅ **Natural Language Queries** — Ask in plain English
-✅ **Multiple LLM Providers** — Z.ai (fast) or Claude (accurate)
-✅ **MCP Compatible** — Works with Claude Code & Desktop
-✅ **PostgreSQL Support** — Full SQL generation & execution
-✅ **Per-Request Configuration** — Switch providers on the fly
-✅ **Docker Ready** — PostgreSQL + Query MCP in containers
-✅ **Error Handling** — Consistent JSON error responses
-✅ **Sample Data** — Pre-loaded test database
-
-## Use Cases
-
-### 1. Business Analytics
-**User:** "How many drugs sold this month?"
-**Generated SQL:** `SELECT COUNT(*) FROM orders WHERE DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE);`
-
-### 2. Data Exploration
-**User:** "Show me the top 5 most expensive items"
-**Generated SQL:** `SELECT * FROM items ORDER BY price DESC LIMIT 5;`
-
-### 3. Complex Queries
-**User:** "Count drugs by category and show average price"
-**Generated SQL:** `SELECT category, COUNT(*) as count, AVG(price) as avg_price FROM drugs GROUP BY category;`
-
-### 4. Filtering & Search
-**User:** "Find all active users who placed orders"
-**Generated SQL:** `SELECT DISTINCT u.* FROM users u JOIN orders o ON u.id = o.user_id WHERE u.status = 'active';`
-
-## Architecture
-
-### Three-Layer System
-
-```
-┌─────────────────────────────────┐
-│  User Interface Layer           │
-│  (Claude, CLI, API)             │
-└──────────────┬──────────────────┘
-               │
-┌──────────────▼──────────────────┐
-│  Query MCP Server               │
-│  - MCP Protocol Handler         │
-│  - Configuration Management     │
-│  - Error Handling               │
-└──────────────┬──────────────────┘
-               │
-┌──────────────▼──────────────────┐
-│  TextToSQL Engine               │
-│  - LLM Integration (Z.ai/Claude)│
-│  - SQL Generation               │
-│  - Query Execution              │
-└──────────────┬──────────────────┘
-               │
-┌──────────────▼──────────────────┐
-│  PostgreSQL Database            │
-│  - Schema Discovery             │
-│  - Query Execution              │
-│  - Result Formatting            │
-└─────────────────────────────────┘
-```
-
-## Supported LLM Providers
-
-### Z.ai (Default)
-- **Model:** GLM-5.1
-- **Speed:** Fast (500-1000ms)
-- **Quality:** Good for SQL
-- **Cost:** Competitive
-- **Docs:** https://docs.z.ai
-
-### Anthropic Claude
-- **Model:** Claude 3.5 Sonnet
-- **Speed:** Medium (1-2s)
-- **Quality:** Excellent (better reasoning)
-- **Cost:** Higher
-- **Docs:** https://docs.anthropic.com
-
-## Data Flow Examples
-
-### Example 1: Simple SELECT
-
-```
-Input:  "Show me all drugs with price > 100"
-        table: "drugs"
-        
-Process:
-  1. Fetch schema: columns = [id, name, price, ...]
-  2. Build prompt with schema
-  3. Call LLM (Z.ai)
-  4. Parse response → "SELECT * FROM drugs WHERE price > 100"
-  5. Execute query
-  
-Output: [
-  {"id": 1, "name": "Drug A", "price": 150},
-  {"id": 2, "name": "Drug B", "price": 200}
-]
-```
-
-### Example 2: Aggregation
-
-```
-Input:  "Count drugs by category"
-        table: "drugs"
-        
-Process:
-  1. Fetch schema
-  2. Build prompt
-  3. Call LLM
-  4. Parse → "SELECT category, COUNT(*) FROM drugs GROUP BY category"
-  5. Execute
-  
-Output: [
-  {"category": "Pain Relief", "count": 3},
-  {"category": "Antibiotic", "count": 5},
-  {"category": "Diabetes", "count": 2}
-]
-```
-
-## Technology Stack
-
-### Backend
-- **Language:** Python 3.11
-- **MCP Framework:** FastMCP 0.7.1
-- **LLM SDKs:** 
-  - Z.ai SDK 1.0.0
-  - Anthropic SDK 0.38.0
-- **Database:** psycopg2 (PostgreSQL driver)
-
-### Infrastructure
-- **Containerization:** Docker & Docker Compose
-- **Database:** PostgreSQL 15 (Alpine)
-- **Protocol:** MCP (Model Context Protocol)
-
-### Sample Data
-- 15 drugs
-- 10 items
-- 10 users
-- 10 orders
-- 3 sample views
-
-## Integration Points
-
-### Claude Code
-```json
-{
-  "mcp_servers": {
-    "query-mcp": {
-      "command": "python",
-      "args": ["/path/to/server.py"],
-      "env": {"QUERY_MCP_API_KEY": "..."}
-    }
-  }
-}
-```
-
-### Claude Desktop
-Edit `claude_desktop_config.json`:
-```json
-{
-  "mcpServers": {
-    "query-mcp": {
-      "command": "python",
-      "args": ["/path/to/server.py"],
-      "env": {"QUERY_MCP_API_KEY": "..."}
-    }
-  }
-}
-```
-
-### Docker Compose
-```bash
-docker-compose up -d
-# Postgres on 5440
-# Query MCP ready for MCP clients
-```
-
-## API Reference (Simplified)
-
-### Three Main Tools
-
-| Tool | Input | Output |
-|------|-------|--------|
-| `generate_sql` | Natural language + table | SQL query |
-| `execute_sql` | SQL query | Results |
-| `text_to_sql_execute` | Natural language + table | SQL + results |
-
-### Response Format
-
-**Success:**
-```json
-{
-  "success": true,
-  "sql": "SELECT ...",
-  "results": [...],
-  "row_count": 5,
-  "error": null
-}
-```
-
-**Error:**
-```json
-{
-  "success": false,
-  "sql": null,
-  "results": null,
-  "row_count": 0,
-  "error": "Table not found"
-}
-```
-
-## Configuration
-
-### Minimal Setup
-```bash
-export QUERY_MCP_API_KEY="your-key"
-python server.py
-```
-
-### With Config File
-```json
-{
-  "database": {
-    "host": "localhost",
-    "port": 5432,
-    "name": "postgres",
-    "user": "postgres",
-    "password": "postgres"
-  },
-  "text_to_sql": {
-    "llm_api_key": "your-key",
-    "llm_provider": "zai",
-    "llm_model": "glm-5.1"
-  }
-}
-```
-
-## Deployment Options
-
-### Development (Local)
-```bash
-python server.py
-```
-
-### Docker
-```bash
-docker-compose up -d
-```
-
-### Production
-- Kubernetes
-- Cloud Functions (AWS Lambda, GCP Functions)
-- Systemd service
-- Container orchestration
-
-See DEPLOYMENT.md for details.
-
-## Performance Characteristics
-
-### Latency
-- Schema discovery: ~100ms
-- LLM API call: 500-2000ms (depends on provider)
-- Query execution: 50-500ms
-- **Total: 1-3 seconds per request**
-
-### Throughput
-- Single instance: ~20-30 requests/min
-- With load balancing: Scales linearly
-
-### Resource Usage
-- Memory: ~100-200MB
-- CPU: Low (I/O bound)
-- Connections: 1 per operation
-
-## Security Model
-
-### What's Protected
-✅ API key (env var, not stored in config)
-✅ Database password (local config file)
-✅ No query logging/auditing yet
-
-### What's Not Protected
-⚠️ SQL injection (user provides natural language, not SQL)
-⚠️ Data access (uses database permissions)
-⚠️ Network transport (use TLS in production)
-
-### Best Practices
-1. Store API key in environment variable
-2. Use strong database passwords
-3. Restrict PostgreSQL user permissions
-4. Use TLS for remote connections
-5. Enable audit logging
-6. Monitor API usage
-
-## Roadmap
-
-### Current Version (1.0.0)
-✅ Generate SQL from natural language
-✅ Execute SQL and return results
-✅ Multiple LLM providers
-✅ Docker support
-✅ MCP integration
-
-### Planned (2.0.0)
-⏳ Schema caching for performance
-⏳ Connection pooling
-⏳ Rate limiting
-⏳ Request authentication
-⏳ Query result visualization
-
-### Future (3.0.0)
-🔮 Support MySQL, SQLServer, MongoDB
-🔮 Query optimization suggestions
-🔮 Fine-tuned LLM models
-🔮 Query result caching
-🔮 Multi-database federation
-
-## Common Questions
-
-**Q: Is this production-ready?**
-A: For development/testing yes. For production, see DEPLOYMENT.md for security & scaling setup.
-
-**Q: Which LLM is better?**
-A: Z.ai is faster & cheaper. Claude is more accurate for complex queries. Choose based on your needs.
-
-**Q: Can I use other databases?**
-A: Currently PostgreSQL only. MySQL/SQLServer support planned.
-
-**Q: How do I add my own data?**
-A: Connect to PostgreSQL directly or modify init-db.sql before Docker setup.
-
-**Q: Is my data safe?**
-A: Data stays in your PostgreSQL instance. API calls go to Z.ai or Anthropic.
-
-**Q: What about costs?**
-A: Z.ai & Anthropic charge per API call. See their pricing pages.
-
-## Quick Links
-
-| Resource | Purpose |
-|----------|---------|
-| [QUICK_START.md](QUICK_START.md) | 5-minute setup |
-| [README.md](README.md) | Features & usage |
-| [API_REFERENCE.md](API_REFERENCE.md) | Complete API docs |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | System design |
-| [DOCKER_SETUP.md](DOCKER_SETUP.md) | Docker configuration |
-| [DEPLOYMENT.md](DEPLOYMENT.md) | Production setup |
-| [INTEGRATION.md](INTEGRATION.md) | Claude integration |
-| [EXAMPLES.md](EXAMPLES.md) | Query examples |
-| [FAQ.md](FAQ.md) | FAQs |
-| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Common issues |
-
-## Getting Started
-
-1. **Read:** [QUICK_START.md](QUICK_START.md) (5 min)
-2. **Setup:** Follow setup instructions (5 min)
-3. **Test:** Query sample database (5 min)
-4. **Integrate:** Add to Claude (5 min)
-5. **Deploy:** See DEPLOYMENT.md when ready
-
-Total time: **25 minutes** to full setup.
-
-## Support
-
-- GitHub: (coming soon)
-- Documentation: See links above
-- Issues: Check TROUBLESHOOTING.md
+Query MCP eliminates this cycle. It sits between you and your database, letting you ask questions the same way you'd ask a colleague — in plain English — and getting back clear, accurate answers in seconds.
 
 ---
 
-**Version:** 1.0.0  
-**Last Updated:** 2026-04-13  
-**Status:** Production Ready
+## Who It's For
+
+**Business owners** who want to understand what's happening in their business without depending on a developer every time.
+
+**Operations leaders** who need to monitor performance, spot anomalies, and make fast decisions.
+
+**Sales and marketing teams** who want to pull customer segments, track campaigns, and identify trends without technical help.
+
+**Anyone with a question** about data in a database, who doesn't want to learn SQL to get the answer.
+
+---
+
+## What You Can Ask
+
+### Revenue & Sales
+- "What was total revenue last month?"
+- "Which product categories are growing fastest?"
+- "Show me our top 20 customers by lifetime value"
+- "Which sales rep closed the most deals this quarter?"
+
+### Operations & Inventory
+- "How many units of Product X do we have in stock?"
+- "Which products are below reorder level?"
+- "Show me all orders that haven't shipped in over 5 days"
+- "What's our average order fulfillment time?"
+
+### Customer Insights
+- "Which customers placed more than 3 orders this year?"
+- "How many new customers signed up last week?"
+- "Which customers haven't purchased in 60+ days?"
+- "What's our customer retention rate this quarter?"
+
+### Financial Analysis
+- "What's the average order value by region?"
+- "Show me all transactions over $10,000 this month"
+- "Which product has the highest profit margin?"
+- "How does this month compare to the same month last year?"
+
+---
+
+## How It Works
+
+You don't need to understand the technical details to use Query MCP. Here's a plain-English explanation:
+
+1. **You ask a question** — in your own words, in any language
+2. **The AI reads your database structure** — it learns what data you have available
+3. **The AI writes the precise query** — translating your question into exact database instructions
+4. **Your database runs the query** — against your real, live data
+5. **You get a clear answer** — summarized in plain language, with the supporting data
+
+The entire process takes 1–3 seconds.
+
+---
+
+## Business Use Cases
+
+### Daily Operations Check
+Instead of manually building reports each morning, ask:
+- "Show me yesterday's order volume and revenue"
+- "Any orders with issues or delays?"
+- "How does today's pipeline look versus last Monday?"
+
+### Weekly Business Review
+Pull the numbers you need without waiting for anyone:
+- "Revenue by product line this week vs. last week"
+- "New customers acquired this week by channel"
+- "Top 10 deals closed this week"
+
+### Ad-Hoc Investigation
+When something looks off, dig in immediately:
+- "Why did sales drop on Tuesday? Show me order volume by hour"
+- "Which customers made large purchases this month but not last month?"
+- "Find all refunds issued in the past 30 days"
+
+### Executive Reporting
+Prepare for board meetings or investor updates by pulling the exact numbers you need:
+- "Revenue, growth rate, and average order value for each quarter this year"
+- "Customer count, churn rate, and net new customers by month"
+- "Top 5 markets by revenue growth"
+
+---
+
+## What Makes It Safe
+
+Business leaders often worry about giving teams access to live data. Query MCP is designed with safety as a core principle:
+
+**Read-only by design.** Query MCP can only read data — it cannot insert, update, or delete anything. This is enforced at the system level, not just by policy.
+
+**Full audit trail.** Every question asked, every query run, and every result returned is logged. You know exactly who asked what, and when.
+
+**Your data stays yours.** Data lives in your own database. The AI only sees your table structure and the results of specific queries — not your full database.
+
+**Clarifies before guessing.** If your question is ambiguous, Query MCP asks a clarifying question rather than guessing and returning wrong results.
+
+---
+
+## Response Quality
+
+Query MCP is tuned to give direct, useful answers — not just raw data tables.
+
+**Example question:** *"Who are our best customers?"*
+
+**Instead of:** A raw table of 10,000 rows
+
+**You get:** *"Your top 5 customers by total spend this year are: [Customer A] at $142,000, [Customer B] at $98,500..."*
+
+You can always ask for more detail, a different time period, or a different metric — it's a conversation.
+
+---
+
+## Languages
+
+Ask in English, Spanish, Vietnamese, French, Japanese, or any other major language. Responses come back in the same language you asked in.
+
+---
+
+## Technical Overview
+
+> For IT teams evaluating or deploying Query MCP.
+
+**Architecture:** A lightweight server that connects to your existing PostgreSQL database. No changes to your database schema required. Runs on-premise, in your cloud, or via Docker.
+
+**AI Providers:** Configurable. Google Gemini (default, free tier available), Anthropic Claude, or Z.ai GLM. Your team chooses the provider; end users don't need to think about it.
+
+**Integration:** Works with Claude Code and Claude Desktop via the Model Context Protocol (MCP), or as a standalone HTTP REST API.
+
+**Deployment:** Docker Compose for quick setup; Cloud Run or any container platform for production. See [DEPLOYMENT.md](DEPLOYMENT.md).
+
+**Performance:** 1–3 seconds per query end-to-end. Handles 20–30 concurrent requests per instance; scales horizontally.
+
+---
+
+## Getting Started
+
+For a 5-minute setup, see [QUICK_START.md](../QUICK_START.md).
+
+For deployment to production, see [DEPLOYMENT.md](DEPLOYMENT.md).
+
+For example questions and results, see [EXAMPLES.md](EXAMPLES.md).
+
+For common questions, see [FAQ.md](FAQ.md).

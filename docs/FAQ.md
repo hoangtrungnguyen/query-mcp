@@ -1,285 +1,142 @@
-# Query MCP - Frequently Asked Questions
-
-Common questions and answers.
+# Frequently Asked Questions
 
 ## General
 
-**Q: What is Query MCP?**
-A: Query MCP is a tool that converts natural language questions into SQL queries using AI (Z.ai or Claude). It's an MCP-compatible server that integrates with Claude.
+**What is Query MCP?**  
+Query MCP is an AI-powered tool that lets you ask questions about your business data in plain English and get immediate answers — without writing code or SQL. Connect it to your database, ask a question, get a result.
 
-**Q: What can I use it for?**
-A: Business queries, data exploration, analytics, reporting, ad-hoc data analysis.
+**Who is it for?**  
+Business owners, operations leaders, sales managers, analysts — anyone who needs answers from their data without depending on a developer. If you've ever said "I just want to know X from our database," this is for you.
 
-**Q: Is it free?**
-A: The software is open-source (free), but you pay for LLM API calls (Z.ai or Anthropic).
+**Do I need to know SQL or coding?**  
+No. That's the whole point. Ask naturally: "Which customers spent the most this quarter?" and Query MCP handles the technical translation.
 
-**Q: What's the difference between Z.ai and Anthropic?**
-A: Z.ai is faster and cheaper. Anthropic Claude is more accurate for complex queries. Choose based on your needs.
-
-**Q: Can I use both providers?**
-A: Yes! Switch per-request: "Use Z.ai for this" or "Use Claude for this".
+**What kinds of questions can I ask?**  
+Revenue, sales trends, customer behavior, inventory levels, order status, performance comparisons, segment analysis — anything that can be answered from your database.
 
 ---
 
-## Setup & Installation
+## Getting Answers
 
-**Q: Do I need to install anything?**
-A: Just Docker (recommended) or Python 3.8+.
+**How do I ask a question?**  
+Just type it in plain English. Good examples:
+- "What were our top 5 revenue drivers last month?"
+- "Show me customers who haven't ordered in 90 days"
+- "Which product category has the highest average order value?"
 
-**Q: How long does setup take?**
-A: ~5 minutes with Docker, ~10 minutes manually.
+**What if the answer seems wrong?**  
+Rephrase with more specifics. Instead of "show me sales," try "show me total revenue by product category for Q1 2025, sorted highest to lowest."
 
-**Q: Can I run on Windows?**
-A: Yes, with Docker Desktop or WSL2 + Python.
+**What if it asks me a clarifying question?**  
+That's intentional. If your question is ambiguous, Query MCP will ask rather than guess and return a misleading result.
 
-**Q: Do I need to modify my database?**
-A: No, Query MCP reads from existing tables. No schema changes needed.
+**Can I ask follow-up questions?**  
+Yes. The conversation builds on context. After asking "Who are our top customers?" you can follow up with "Which of those haven't ordered this month?"
 
-**Q: Can I use my own database?**
-A: Yes! Update config with your PostgreSQL connection details.
-
----
-
-## Usage
-
-**Q: How do I ask questions?**
-A: Natural language: "Show me expensive drugs" or "Count items by category".
-
-**Q: Do I need to know SQL?**
-A: No! That's the whole point. Ask in English, we generate SQL.
-
-**Q: What if the generated SQL is wrong?**
-A: Try rephrasing: "Show drugs with price > 100 sorted by price".
-
-**Q: Can I see the SQL before it runs?**
-A: Yes, use `generate_sql` tool to see SQL without executing.
-
-**Q: What tables can I query?**
-A: Any table in your PostgreSQL database.
+**Can I ask in my own language?**  
+Yes. Ask in English, Spanish, French, Vietnamese, or any major language. Answers come back in the same language.
 
 ---
 
-## API Keys & Security
+## Data & Safety
 
-**Q: How do I get an API key?**
-A: 
-- **Z.ai:** https://z.ai (create account)
-- **Anthropic:** https://anthropic.com (create account)
+**Can Query MCP change or delete my data?**  
+No. It is strictly read-only. It cannot insert, update, or delete any records. This is enforced at the system level.
 
-**Q: Is my API key safe?**
-A: Yes, stored in environment variables (not in code). Never committed to git.
+**Is my data safe?**  
+Your data stays in your database. The AI only sees your table structure and the specific results from the queries you ask — your full database is never exposed.
 
-**Q: What if my API key is exposed?**
-A: Regenerate it immediately in your provider account.
+**Is everything logged?**  
+Yes. Every question, every generated query, and every result is recorded in an audit log. You can always see who asked what and when.
 
-**Q: Can I use multiple API keys?**
-A: Yes, one per provider in config.
-
-**Q: Do I need to store my database password?**
-A: Yes, in `~/.query-mcp/config.json` (user-local, git-ignored).
+**What gets sent to the AI?**  
+Your table and column names (the structure), plus the rows returned by your query. Your credentials and full database contents are never sent to any AI provider.
 
 ---
 
-## Database & SQL
+## Data Access
 
-**Q: What databases are supported?**
-A: Currently PostgreSQL only. MySQL/SQLServer planned.
+**What databases does it work with?**  
+Currently PostgreSQL. Support for MySQL and SQL Server is on the roadmap.
 
-**Q: Can I query multiple databases?**
-A: Not simultaneously. Set up separate Query MCP instances if needed.
+**Can it query any table in my database?**  
+It can read any table it has been configured to access. Your IT team controls which tables and schemas are accessible.
 
-**Q: Does it modify data?**
-A: No, only SELECT queries. Write operations not supported.
+**Can it access multiple databases at once?**  
+Not simultaneously in a single query. You can run separate instances for different databases.
 
-**Q: How many rows can I retrieve?**
-A: Default limit is 100 rows per query (configurable).
-
-**Q: What about performance on large tables?**
-A: Should be fine for tables with millions of rows. Use indexes for best performance.
-
-**Q: Can I create tables or views?**
-A: No, Query MCP is read-only. Create schemas manually in PostgreSQL.
+**How many rows can it return?**  
+Default is 100 rows per query. Your technical team can raise this limit as needed.
 
 ---
 
-## LLM & AI
+## Performance
 
-**Q: How does SQL generation work?**
-A: LLM receives table schema + your question → generates SQL → executes.
+**How fast are the answers?**  
+Typically 1–3 seconds from question to answer.
 
-**Q: Can I fine-tune the LLM?**
-A: Not yet, planned for future versions.
-
-**Q: How long does SQL generation take?**
-A: ~500ms with Z.ai, ~1-2s with Claude.
-
-**Q: What if the LLM is down?**
-A: Query MCP fails gracefully with error message. Try again later.
-
-**Q: Can I use a local LLM?**
-A: Not yet, but extensible architecture allows it in future.
+**Will it slow down our database?**  
+Minimal impact. Query MCP only reads data and never holds locks.
 
 ---
 
-## Docker & Deployment
+## Setup & IT Questions
 
-**Q: Do I need Docker?**
-A: No, but recommended. Can run standalone with local PostgreSQL.
+> These are for your IT or development team.
 
-**Q: What's the Docker image size?**
-A: Query MCP: ~300MB, PostgreSQL: ~150MB.
+**How long does setup take?**  
+About 5 minutes with Docker, 10–15 minutes for a manual install.
 
-**Q: Can I use Docker Compose?**
-A: Yes! We provide `docker-compose.yml` with PostgreSQL + Query MCP.
+**Does it require changes to our database?**  
+No. Query MCP reads from your existing tables without any schema changes.
 
-**Q: How do I backup my database?**
-A: With Docker: `docker exec postgres pg_dump ...` or use volumes.
+**Can we run it on our own servers?**  
+Yes. Runs on-premise, in your cloud environment, or via Docker. Nothing is hosted externally unless you choose it.
 
-**Q: Is Docker production-ready?**
-A: For development yes. For production, see DEPLOYMENT.md for scaling setup.
+**What AI provider does it use?**  
+Google Gemini by default (with a free tier). Your team can configure it to use Anthropic Claude or Z.ai GLM instead.
 
----
+**What are the ongoing costs?**  
+Only the AI provider API costs per query. Google Gemini offers a free tier. Typical cost with Z.ai is around $0.01–0.05 per question.
 
-## Integration with Claude
+**Is there a free option?**  
+Google Gemini's free tier is sufficient for moderate usage during evaluation and early rollout.
 
-**Q: How do I add Query MCP to Claude?**
-A: See INTEGRATION.md. Simple: add MCP server in Claude settings.
-
-**Q: Does it work with Claude Code?**
-A: Yes, both Claude Code and Claude Desktop.
-
-**Q: What if Claude can't see the tools?**
-A: Check MCP connection status, restart Claude, verify config.
-
-**Q: Can I use Query MCP offline?**
-A: No, needs network access to LLM API and PostgreSQL.
-
-**Q: What data does Claude see?**
-A: Only table schemas and query results. Schema is sent to LLM.
-
----
-
-## Performance & Scaling
-
-**Q: How many queries per second can it handle?**
-A: Single instance: ~20-30 req/s. With load balancing: scales linearly.
-
-**Q: How much memory does it use?**
-A: ~100-200MB for server, depends on query result size.
-
-**Q: Is there caching?**
-A: Not yet, but planned for v2.
-
-**Q: Will it slow down my database?**
-A: Minimal impact. Only reads, no locking.
-
-**Q: Can I deploy to Kubernetes?**
-A: Yes, stateless design works great with K8s.
-
----
-
-## Costs
-
-**Q: How much does it cost to run?**
-A: Only LLM API costs (Z.ai or Anthropic per call).
-
-**Q: Typical costs per month?**
-A: Depends on usage. Z.ai is ~$0.01-0.05 per query.
-
-**Q: Any free tier?**
-A: Check with Z.ai and Anthropic for their free tiers.
-
-**Q: How can I reduce costs?**
-A: Use Z.ai (cheaper) for simple queries, cache results, batch queries.
+**Does it work with Claude?**  
+Yes — both Claude Code and Claude Desktop, via the MCP integration. Business users can also access it through a REST API.
 
 ---
 
 ## Troubleshooting
 
-**Q: Query takes forever. Why?**
-A: Could be slow database, large result set, or slow LLM. Check logs.
+**The answer doesn't match what I expected.**  
+Try being more specific. Include the time period, metric, and how you want results sorted.
 
-**Q: "API key not configured". What do I do?**
-A: Set `export QUERY_MCP_API_KEY="your-key"` before running.
+**It said it couldn't understand my question.**  
+Rephrase it. Describe what you want in the simplest possible terms: "top 10 [X] by [Y] in [time period]."
 
-**Q: PostgreSQL won't connect.**
-A: Check it's running: `psql -h localhost -U postgres`.
-
-**Q: "Table not found".**
-A: Table name is case-sensitive. Check exact name in database.
-
-**Q: Wrong SQL generated.**
-A: Rephrase question more specifically. Or try different LLM provider.
-
----
-
-## Advanced
-
-**Q: Can I extend Query MCP?**
-A: Yes! Modular design allows adding new features. See ARCHITECTURE.md.
-
-**Q: How do I add a new LLM provider?**
-A: Update `text_to_sql.py` to support new provider API. See code comments.
-
-**Q: Can I use custom database views?**
-A: Yes! Create views in PostgreSQL, Query MCP will discover them.
-
-**Q: What about data privacy?**
-A: Queries sent to LLM API (Z.ai or Anthropic). Keep sensitive data considerations in mind.
-
-**Q: Can I audit queries?**
-A: Not built-in, but PostgreSQL `pg_stat_statements` tracks all queries.
+**Results came back empty.**  
+Either no data matches your criteria, or the table name may have been misidentified. Ask your technical team to verify which tables are connected.
 
 ---
 
 ## Limitations
 
-**Q: What can't Query MCP do?**
-A:
-- No write operations (INSERT, UPDATE, DELETE)
-- No multi-database queries
-- No real-time streaming
-- No graph databases
-- No authentication per user (yet)
+**What can't it do?**
+- Cannot write, update, or delete data (read-only by design)
+- Cannot combine data across multiple databases in one query
+- Does not stream real-time data
+- Currently PostgreSQL only
 
-**Q: Why no write operations?**
-A: Safety-first design. Prevents accidental data loss.
-
-**Q: Will these be added?**
-A: Write operations under consideration for v2. Others on roadmap.
+**Will write access ever be added?**  
+It's under consideration for a future version, with appropriate authorization controls. The current priority is making read access as useful and safe as possible.
 
 ---
 
 ## Getting Help
 
-**Q: Where do I find documentation?**
-A: See [INDEX.md](INDEX.md) for all docs.
+For a walkthrough of common questions with sample results, see [EXAMPLES.md](EXAMPLES.md).
 
-**Q: Still stuck?**
-A: Check [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common issues.
+For setup and deployment, see [QUICK_START.md](../QUICK_START.md) or [DEPLOYMENT.md](DEPLOYMENT.md).
 
-**Q: How do I report a bug?**
-A: GitHub issues (coming soon).
-
-**Q: Can I contribute?**
-A: Yes! This is an open-source project.
-
----
-
-## Common Phrases for Claude
-
-Use these to get better results:
-
-```
-"Using Z.ai, show me..."
-"Using Claude, analyze..."
-"Show me [X] sorted by [Y]"
-"Count [X] by [Y]"
-"Find [X] where [condition]"
-"Top 10 [X] by [Y]"
-"[X] between [A] and [B]"
-```
-
----
-
-For more information, see the complete documentation in [INDEX.md](INDEX.md).
+For technical troubleshooting, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).

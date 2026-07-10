@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Query MCP — Knowledge Base</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1a1d21; --muted:#6b7280; --accent:#2563eb; --border:#e5e7eb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#111418; --card:#1b2027; --ink:#e8eaed; --muted:#9aa2ad; --accent:#7aa2f7; --border:#2a3038; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.55 system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--ink);
+         display:flex; flex-direction:column; height:100dvh; }
+  header { padding:14px 20px; border-bottom:1px solid var(--border); background:var(--card); }
+  header h1 { margin:0; font-size:16px; }
+  header p { margin:2px 0 0; font-size:12.5px; color:var(--muted); }
+  #chat { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:12px; }
+  .msg { max-width:min(720px,90%); padding:10px 14px; border-radius:12px; white-space:pre-wrap;
+         overflow-wrap:break-word; }
+  .user { align-self:flex-end; background:var(--accent); color:#fff; border-bottom-right-radius:4px; }
+  .bot  { align-self:flex-start; background:var(--card); border:1px solid var(--border); border-bottom-left-radius:4px; }
+  .bot pre { background:rgba(127,127,127,.12); padding:10px; border-radius:8px; overflow-x:auto; font-size:13px; }
+  .bot code { font-family:ui-monospace,monospace; font-size:13px; }
+  .err { border-color:#dc2626; color:#dc2626; }
+  .typing { color:var(--muted); font-style:italic; }
+  form { display:flex; gap:10px; padding:14px 20px; border-top:1px solid var(--border); background:var(--card); }
+  input { flex:1; padding:11px 14px; border:1px solid var(--border); border-radius:10px;
+          background:var(--bg); color:var(--ink); font:inherit; outline:none; }
+  input:focus { border-color:var(--accent); }
+  button { padding:11px 20px; border:0; border-radius:10px; background:var(--accent); color:#fff;
+           font:inherit; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:default; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Query MCP — Knowledge Base</h1>
+  <p>Ask about the APIs, business rules, and how-tos in the KB. Answers cite their source doc.</p>
+</header>
+<div id="chat"></div>
+<form id="f">
+  <input id="q" placeholder="e.g. What's the curl to get lucky codes for an account?" autocomplete="off" autofocus>
+  <button id="send">Ask</button>
+</form>
+<script>
+const chat = document.getElementById('chat'), form = document.getElementById('f'),
+      q = document.getElementById('q'), btn = document.getElementById('send');
+
+function add(cls, text) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + cls;
+  d.textContent = text;
+  chat.appendChild(d);
+  chat.scrollTop = chat.scrollHeight;
+  return d;
+}
+
+// minimal md: fenced code + inline code, safely (textContent first, then wrap)
+function render(el, text) {
+  el.textContent = '';
+  text.split(/```/).forEach((part, i) => {
+    if (i % 2) {
+      const pre = document.createElement('pre');
+      pre.textContent = part.replace(/^[a-z]*\n/, '');
+      el.appendChild(pre);
+    } else {
+      part.split(/`([^`]+)`/).forEach((seg, j) => {
+        if (j % 2) { const c = document.createElement('code'); c.textContent = seg; el.appendChild(c); }
+        else el.appendChild(document.createTextNode(seg));
+      });
+    }
+  });
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const question = q.value.trim();
+  if (!question) return;
+  add('user', question);
+  q.value = ''; btn.disabled = true;
+  const wait = add('bot typing', 'Reading the knowledge base…');
+  try {
+    const r = await fetch('/api/ask', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({question})
+    });
+    const data = await r.json();
+    wait.className = 'msg bot' + (r.ok ? '' : ' err');
+    render(wait, data.answer || data.error || 'Unexpected response');
+  } catch (err) {
+    wait.className = 'msg bot err';
+    wait.textContent = 'Request failed: ' + err;
+  } finally {
+    btn.disabled = false; q.focus();
+  }
+});
+</script>
+</body>
+</html>

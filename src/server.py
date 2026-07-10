@@ -102,6 +102,45 @@ def kb_index() -> str:
     return f"# KB Index (unbuilt — run scripts/build_index.py)\n\n{docs}"
 
 
+# --- Web interface (HTTP mode only) -----------------------------------------
+
+WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+
+
+@mcp.custom_route("/", methods=["GET"])
+async def home(request):
+    from starlette.responses import FileResponse
+
+    return FileResponse(WEB_DIR / "index.html")
+
+
+@mcp.custom_route("/api/ask", methods=["POST"])
+async def api_ask(request):
+    import anyio
+    from starlette.responses import JSONResponse
+
+    import kb_agent
+
+    try:
+        body = await request.json()
+        question = (body.get("question") or "").strip()
+        if not question:
+            return JSONResponse({"error": "Missing 'question'"}, status_code=400)
+        answer = await anyio.to_thread.run_sync(
+            lambda: kb_agent.answer(question, read_doc, search_kb, kb_index())
+        )
+        return JSONResponse({"answer": answer})
+    except Exception as e:
+        logger.exception("ask failed")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 if __name__ == "__main__":
+    import sys
+
     logger.info("Serving KB from %s (%d docs)", KB_DIR, len(list(KB_DIR.rglob("*.md"))))
-    mcp.run()
+    if len(sys.argv) > 1 and sys.argv[1] == "http":
+        port = int(sys.argv[2]) if len(sys.argv) > 2 else 8001
+        mcp.run(transport="http", host="127.0.0.1", port=port)
+    else:
+        mcp.run()
